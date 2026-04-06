@@ -4,6 +4,13 @@ The Yertle CLI is a Go command-line client for exploring the Yertle platform. It
 
 This repository is the CLI implementation. It is intentionally thin: Cobra handles command routing, a small API client talks to the backend over HTTP, and commands render either scriptable output (`table`, `json`, `csv`) or terminal-native views such as the ASCII tree and canvas.
 
+## Installation
+
+```bash
+brew tap model-context/yertle
+brew install yertle
+```
+
 ## Current Scope
 
 Implemented today:
@@ -138,6 +145,43 @@ yertle tree --format json
 - [output/](./output): shared renderers for table, JSON, and CSV output
 - [tui/](./tui): placeholder location for future interactive UIs
 - [docs/](./docs): design, roadmap, demo, review, and architecture notes
+
+## Releasing
+
+Releases are automated with [GoReleaser](https://goreleaser.com). A release cross-compiles for macOS, Linux, and Windows, uploads binaries to GitHub Releases, and pushes an updated Homebrew formula to [model-context/homebrew-yertle](https://github.com/model-context/homebrew-yertle).
+
+```bash
+# Commit all changes first — GoReleaser requires a clean git state
+git add -A && git commit -m "prepare v0.1.0"
+
+# Tag the release
+git tag v0.1.0
+git push origin v0.1.0
+
+# Publish (requires GITHUB_TOKEN with repo scope)
+export GITHUB_TOKEN=<your-token>
+make release
+```
+
+If you need to redo a tag (e.g., you tagged before committing):
+
+```bash
+# Delete the tag locally and on the remote
+git tag -d v0.1.0
+git push origin --delete v0.1.0
+
+# Re-tag and push
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+To test the release process locally without publishing:
+
+```bash
+make release-dry-run
+```
+
+See [docs/PACKAGING.md](./docs/PACKAGING.md) for details on cross-platform distribution.
 
 ## Additional Documentation
 

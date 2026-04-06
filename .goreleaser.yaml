@@ -1,0 +1,39 @@
+project_name: yertle
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+brews:
+  - repository:
+      owner: model-context
+      name: homebrew-yertle
+    homepage: "https://github.com/model-context/yertle-cli"
+    description: "CLI for exploring the Yertle platform"
+    license: "MIT"
+    install: |
+      bin.install "yertle"
+
+changelog:
+  sort: asc
+
+release:
+  github:
+    owner: model-context
+    name: yertle-cli
