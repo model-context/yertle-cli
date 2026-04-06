@@ -23,7 +23,7 @@ Planned but not implemented:
 
 ## Build
 
-The module currently targets Go `1.26.1` in [go.mod](/Users/almiller/Applications/yertle-repos/yertle-cli/go.mod).
+The module currently targets Go `1.26.1` in [go.mod](./go.mod).
 
 ```bash
 go build -o yertle .
@@ -131,18 +131,18 @@ yertle tree --format json
 
 ## Repository Layout
 
-- [main.go](/Users/almiller/Applications/yertle-repos/yertle-cli/main.go): program entrypoint
-- [cmd/](/Users/almiller/Applications/yertle-repos/yertle-cli/cmd): Cobra commands and presentation logic
-- [api/](/Users/almiller/Applications/yertle-repos/yertle-cli/api): HTTP client and response types
-- [config/](/Users/almiller/Applications/yertle-repos/yertle-cli/config): config loading, saving, env/flag resolution, ID cache
-- [output/](/Users/almiller/Applications/yertle-repos/yertle-cli/output): shared renderers for table, JSON, and CSV output
-- [tui/](/Users/almiller/Applications/yertle-repos/yertle-cli/tui): placeholder location for future interactive UIs
-- [docs/](/Users/almiller/Applications/yertle-repos/yertle-cli/docs): design, roadmap, demo, review, and architecture notes
+- [main.go](./main.go): program entrypoint
+- [cmd/](./cmd): Cobra commands and presentation logic
+- [api/](./api): HTTP client and response types
+- [config/](./config): config loading, saving, env/flag resolution, ID cache
+- [output/](./output): shared renderers for table, JSON, and CSV output
+- [tui/](./tui): placeholder location for future interactive UIs
+- [docs/](./docs): design, roadmap, demo, review, and architecture notes
 
 ## Additional Documentation
 
-- [Architecture](/Users/almiller/Applications/yertle-repos/yertle-cli/docs/ARCHITECTURE.md)
-- [Design](/Users/almiller/Applications/yertle-repos/yertle-cli/docs/DESIGN.md)
-- [Roadmap](/Users/almiller/Applications/yertle-repos/yertle-cli/docs/ROADMAP.md)
-- [Code Review Notes](/Users/almiller/Applications/yertle-repos/yertle-cli/docs/CODE_REVIEW.md)
-- [Demo Notes](/Users/almiller/Applications/yertle-repos/yertle-cli/docs/DEMO.md)
+- [Architecture](./docs/ARCHITECTURE.md)
+- [Design](./docs/DESIGN.md)
+- [Roadmap](./docs/ROADMAP.md)
+- [Code Review Notes](./docs/CODE_REVIEW.md)
+- [Demo Notes](./docs/DEMO.md)
