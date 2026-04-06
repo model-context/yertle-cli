@@ -152,6 +152,10 @@ Run "yertle about" for a full overview of Yertle and common workflows.
 `)
 }
 
+func SetVersion(v string) {
+	rootCmd.Version = v
+}
+
 func Execute() error {
 	return rootCmd.Execute()
 }

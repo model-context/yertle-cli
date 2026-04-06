@@ -139,6 +139,35 @@ yertle tree --format json
 - [tui/](./tui): placeholder location for future interactive UIs
 - [docs/](./docs): design, roadmap, demo, review, and architecture notes
 
+## Installation
+
+```bash
+brew tap model-context/yertle
+brew install yertle
+```
+
+## Releasing
+
+Releases are automated with [GoReleaser](https://goreleaser.com). A release cross-compiles for macOS, Linux, and Windows, uploads binaries to GitHub Releases, and pushes an updated Homebrew formula to [model-context/homebrew-yertle](https://github.com/model-context/homebrew-yertle).
+
+```bash
+# Tag the release
+git tag v0.1.0
+git push origin v0.1.0
+
+# Publish (requires GITHUB_TOKEN with repo scope)
+export GITHUB_TOKEN=<your-token>
+make release
+```
+
+To test the release process locally without publishing:
+
+```bash
+make release-dry-run
+```
+
+See [docs/PACKAGING.md](./docs/PACKAGING.md) for details on cross-platform distribution.
+
 ## Additional Documentation
 
 - [Architecture](./docs/ARCHITECTURE.md)
