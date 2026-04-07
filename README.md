@@ -51,8 +51,8 @@ The CLI reads and writes local state under `~/.yertle/`.
 
 Config behavior from the current code:
 
-- Default API URL is `http://localhost:8000`
-- `YERTLE_API_URL` overrides the config value
+- Default API URL is `https://api-blue-prod.yertle.com`
+- `YERTLE_API_URL` overrides the config value (e.g. `YERTLE_API_URL=http://localhost:8000` for local development)
 - `--api-url` overrides both config and environment
 - `YERTLE_ORG` sets the default org scope for a command
 - `--org` overrides `YERTLE_ORG`
