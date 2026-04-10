@@ -76,14 +76,12 @@ func (c *Client) GetAllHierarchy() ([]HierarchyEntry, error) {
 // Complete node types — response from /tree/{branch}/complete
 
 type NodeDetail struct {
-	ID          string         `json:"id"`
-	Title       string         `json:"title"`
-	Description string         `json:"description"`
-	OrgID       string         `json:"org_id"`
-	Tags        map[string]any `json:"tags"`
-	Directories []string       `json:"directories"`
-	CreatedAt   string         `json:"created_at"`
-	UpdatedAt   string         `json:"updated_at"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	OrgID       string `json:"org_id"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 type NodeSummary struct {
@@ -118,10 +116,13 @@ type VisualProperty struct {
 
 type CompleteNode struct {
 	Node             NodeDetail       `json:"node"`
+	Tags             map[string]any   `json:"tags"`
+	Directories      []string         `json:"directories"`
+	Documentation    []any            `json:"documentation"`
 	ChildNodes       []NodeSummary    `json:"child_nodes"`
 	ParentNodes      []NodeSummary    `json:"parent_nodes"`
 	VisualProperties []VisualProperty `json:"visual_properties"`
-	Connections      []Connection     `json:"child_node_connections"`
+	Connections      []Connection     `json:"connections"`
 	IngressConns     []ExternalConn   `json:"ingress_connections"`
 	EgressConns      []ExternalConn   `json:"egress_connections"`
 	Metadata         map[string]any   `json:"metadata"`
