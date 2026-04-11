@@ -130,12 +130,12 @@ func printNodeDetails(n *api.CompleteNode) {
 	}
 
 	// Tags
-	if len(n.Node.Tags) > 0 {
+	if len(n.Tags) > 0 {
 		fmt.Println()
 		fmt.Println("  Tags:")
 		type tagPair struct{ key, value, link string }
 		var tags []tagPair
-		for k, v := range n.Node.Tags {
+		for k, v := range n.Tags {
 			val := ""
 			link := ""
 			switch t := v.(type) {
@@ -164,10 +164,10 @@ func printNodeDetails(n *api.CompleteNode) {
 	}
 
 	// Directories
-	if len(n.Node.Directories) > 0 {
+	if len(n.Directories) > 0 {
 		fmt.Println()
 		fmt.Println("  Directories:")
-		for _, d := range n.Node.Directories {
+		for _, d := range n.Directories {
 			fmt.Printf("    - %s\n", d)
 		}
 	}
