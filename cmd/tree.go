@@ -219,11 +219,6 @@ func collectChildren(childrenOf map[string][]*nodeInfo, parentPath string, baseI
 	}
 }
 
-// runeWidth returns the display width of a string, counting each rune as 1.
-func runeWidth(s string) int {
-	return len([]rune(s))
-}
-
 func sanitizeTitle(title string) string {
 	return strings.ReplaceAll(title, "/", "-")
 }

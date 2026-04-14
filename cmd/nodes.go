@@ -81,8 +81,8 @@ var nodesListCmd = &cobra.Command{
 
 var nodesShowCmd = &cobra.Command{
 	Use:   "show <node-id>",
-	Short: "Show detailed information about a node",
-	Long:  "Display a node's full details including children, parents, connections, tags, and directories.",
+	Short: "Show node details and architecture diagram",
+	Long:  "Display a node's full details including children, parents, connections, tags, and directories, with an ASCII architecture diagram shown alongside when children exist.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		appCtx := GetAppContext(cmd)
@@ -111,28 +111,50 @@ var nodesShowCmd = &cobra.Command{
 			return output.RenderJSON(os.Stdout, complete)
 		}
 
-		printNodeDetails(complete)
+		detailLines := renderNodeDetails(complete)
+
+		// If node has children, render canvas alongside details
+		canvasLines := renderCanvasLines(complete, false)
+		if len(canvasLines) > 0 {
+			// Shift canvas down so it starts below the title/separator
+			padded := make([]string, 0, 2+len(canvasLines))
+			padded = append(padded, "", "")
+			padded = append(padded, canvasLines...)
+			canvasLines = padded
+
+			termWidth := getTerminalWidth()
+			combined := renderSideBySide(detailLines, canvasLines, 4, termWidth)
+			for _, line := range combined {
+				fmt.Println(line)
+			}
+		} else {
+			for _, line := range detailLines {
+				fmt.Println(line)
+			}
+		}
 		return nil
 	},
 }
 
-func printNodeDetails(n *api.CompleteNode) {
-	fmt.Printf("%s\n", n.Node.Title)
-	fmt.Println(strings.Repeat("─", 40))
+func renderNodeDetails(n *api.CompleteNode) []string {
+	var lines []string
+
+	lines = append(lines, n.Node.Title)
+	lines = append(lines, strings.Repeat("─", 40))
 
 	if n.Node.Description != "" {
-		fmt.Printf("  Description:  %s\n", n.Node.Description)
+		lines = append(lines, fmt.Sprintf("  Description:  %s", n.Node.Description))
 	}
 
-	fmt.Printf("  Node ID:      %s\n", config.ShortID(n.Node.ID))
+	lines = append(lines, fmt.Sprintf("  Node ID:      %s", config.ShortID(n.Node.ID)))
 	if n.Node.OrgID != "" {
-		fmt.Printf("  Org ID:       %s\n", config.ShortID(n.Node.OrgID))
+		lines = append(lines, fmt.Sprintf("  Org ID:       %s", config.ShortID(n.Node.OrgID)))
 	}
 
 	// Tags
 	if len(n.Tags) > 0 {
-		fmt.Println()
-		fmt.Println("  Tags:")
+		lines = append(lines, "")
+		lines = append(lines, "  Tags:")
 		type tagPair struct{ key, value, link string }
 		var tags []tagPair
 		for k, v := range n.Tags {
@@ -154,47 +176,46 @@ func printNodeDetails(n *api.CompleteNode) {
 		sort.Slice(tags, func(i, j int) bool { return tags[i].key < tags[j].key })
 		for _, t := range tags {
 			if t.value != "" && t.link != "" {
-				fmt.Printf("    - %s: %s - %s\n", t.key, t.value, t.link)
+				lines = append(lines, fmt.Sprintf("    - %s: %s - %s", t.key, t.value, t.link))
 			} else if t.value != "" {
-				fmt.Printf("    - %s: %s\n", t.key, t.value)
+				lines = append(lines, fmt.Sprintf("    - %s: %s", t.key, t.value))
 			} else {
-				fmt.Printf("    - %s\n", t.key)
+				lines = append(lines, fmt.Sprintf("    - %s", t.key))
 			}
 		}
 	}
 
 	// Directories
 	if len(n.Directories) > 0 {
-		fmt.Println()
-		fmt.Println("  Directories:")
+		lines = append(lines, "")
+		lines = append(lines, "  Directories:")
 		for _, d := range n.Directories {
-			fmt.Printf("    - %s\n", d)
+			lines = append(lines, fmt.Sprintf("    - %s", d))
 		}
 	}
 
 	// Parents
-	fmt.Println()
+	lines = append(lines, "")
 	if len(n.ParentNodes) > 0 {
-		fmt.Printf("  %d %s:\n", len(n.ParentNodes), pluralize("Parent", len(n.ParentNodes)))
-		printAlignedIDs(n.ParentNodes)
+		lines = append(lines, fmt.Sprintf("  %d %s:", len(n.ParentNodes), pluralize("Parent", len(n.ParentNodes))))
+		lines = append(lines, renderAlignedIDs(n.ParentNodes)...)
 	} else {
-		fmt.Println("  0 Parents")
+		lines = append(lines, "  0 Parents")
 	}
 
 	// Children
-	fmt.Println()
+	lines = append(lines, "")
 	if len(n.ChildNodes) > 0 {
-		fmt.Printf("  %d %s:\n", len(n.ChildNodes), pluralize("Child", len(n.ChildNodes)))
-		printAlignedIDs(n.ChildNodes)
+		lines = append(lines, fmt.Sprintf("  %d %s:", len(n.ChildNodes), pluralize("Child", len(n.ChildNodes))))
+		lines = append(lines, renderAlignedIDs(n.ChildNodes)...)
 	} else {
-		fmt.Println("  0 Children")
+		lines = append(lines, "  0 Children")
 	}
 
 	// Internal connections (between children)
-	fmt.Println()
+	lines = append(lines, "")
 	if len(n.Connections) > 0 {
-		fmt.Printf("  %d %s:\n", len(n.Connections), pluralize("Connection", len(n.Connections)))
-		// Build a title lookup from children
+		lines = append(lines, fmt.Sprintf("  %d %s:", len(n.Connections), pluralize("Connection", len(n.Connections))))
 		titles := make(map[string]string)
 		for _, c := range n.ChildNodes {
 			titles[c.ID] = c.Title
@@ -209,48 +230,50 @@ func printNodeDetails(n *api.CompleteNode) {
 				to = conn.ToChild
 			}
 			if conn.Label != "" {
-				fmt.Printf("    - %s → %s (%s)\n", from, to, conn.Label)
+				lines = append(lines, fmt.Sprintf("    - %s → %s (%s)", from, to, conn.Label))
 			} else {
-				fmt.Printf("    - %s → %s\n", from, to)
+				lines = append(lines, fmt.Sprintf("    - %s → %s", from, to))
 			}
 		}
 	} else {
-		fmt.Println("  0 Connections")
+		lines = append(lines, "  0 Connections")
 	}
 
 	// Ingress connections
 	if len(n.IngressConns) > 0 {
-		fmt.Println()
-		fmt.Printf("  %d Ingress:\n", len(n.IngressConns))
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("  %d Ingress:", len(n.IngressConns)))
 		for _, conn := range n.IngressConns {
 			name := conn.ConnectedNode.Title
 			if name == "" {
 				name = conn.FromNodeID
 			}
 			if conn.Label != "" {
-				fmt.Printf("    - %s → this (%s)\n", name, conn.Label)
+				lines = append(lines, fmt.Sprintf("    - %s → this (%s)", name, conn.Label))
 			} else {
-				fmt.Printf("    - %s → this\n", name)
+				lines = append(lines, fmt.Sprintf("    - %s → this", name))
 			}
 		}
 	}
 
 	// Egress connections
 	if len(n.EgressConns) > 0 {
-		fmt.Println()
-		fmt.Printf("  %d Egress:\n", len(n.EgressConns))
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("  %d Egress:", len(n.EgressConns)))
 		for _, conn := range n.EgressConns {
 			name := conn.ConnectedNode.Title
 			if name == "" {
 				name = conn.ToNodeID
 			}
 			if conn.Label != "" {
-				fmt.Printf("    - this → %s (%s)\n", name, conn.Label)
+				lines = append(lines, fmt.Sprintf("    - this → %s (%s)", name, conn.Label))
 			} else {
-				fmt.Printf("    - this → %s\n", name)
+				lines = append(lines, fmt.Sprintf("    - this → %s", name))
 			}
 		}
 	}
+
+	return lines
 }
 
 func pluralize(word string, count int) string {
@@ -263,7 +286,8 @@ func pluralize(word string, count int) string {
 	return word + "s"
 }
 
-func printAlignedIDs(nodes []api.NodeSummary) {
+func renderAlignedIDs(nodes []api.NodeSummary) []string {
+	var lines []string
 	maxW := 0
 	for _, n := range nodes {
 		if len(n.Title) > maxW {
@@ -272,8 +296,9 @@ func printAlignedIDs(nodes []api.NodeSummary) {
 	}
 	for _, n := range nodes {
 		padding := maxW - len(n.Title) + 2
-		fmt.Printf("    - %s%s%s\n", n.Title, strings.Repeat(" ", padding), config.ShortID(n.ID))
+		lines = append(lines, fmt.Sprintf("    - %s%s%s", n.Title, strings.Repeat(" ", padding), config.ShortID(n.ID)))
 	}
+	return lines
 }
 
 // fetchAllNodes fetches all nodes with pagination. If orgID is empty, fetches across all orgs.
