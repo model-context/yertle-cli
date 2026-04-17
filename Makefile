@@ -9,21 +9,24 @@ export
 # Default bump component for `make release`. Override: make release BUMP=minor
 BUMP ?= patch
 
-.PHONY: build run clean test release release-dry-run
+.PHONY: help build run clean test release release-dry-run
 
-build:
+help: ## Show this help message
+	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[32mmake %-16s\033[0m %s\n", $$1, $$2}'
+
+build: ## Build the yertle binary
 	go build -ldflags "-s -w -X main.version=$(VERSION)" -o $(PROJECT) .
 
-run: build
+run: build ## Build and run the yertle binary
 	./$(PROJECT)
 
-clean:
+clean: ## Remove the built binary
 	rm -f $(PROJECT)
 
-test:
+test: ## Run all Go tests
 	go test ./...
 
-release-dry-run:
+release-dry-run: ## Test the release pipeline locally (no publish)
 	goreleaser release --snapshot --clean
 
 # Tag + publish a new release. Defaults: patch-bumps the latest tag, requires
@@ -35,7 +38,7 @@ release-dry-run:
 #   make release BUMP=minor        # v0.1.0 -> v0.2.0
 #   make release BUMP=major        # v0.1.0 -> v1.0.0
 #   make release TAG=v0.5.0        # explicit
-release:
+release: ## Tag and publish a new release (BUMP=patch|minor|major)
 	@set -e; \
 	if [ -z "$$GITHUB_TOKEN" ]; then \
 		echo "ERROR: GITHUB_TOKEN is not set."; \

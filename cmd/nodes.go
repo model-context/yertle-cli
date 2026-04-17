@@ -102,41 +102,114 @@ var nodesShowCmd = &cobra.Command{
 			return fmt.Errorf("organization required — use --org flag or run 'yertle tree' first to populate the cache")
 		}
 
-		complete, err := appCtx.Client.GetCompleteNode(orgID, nodeID, "main")
+		canvas, err := appCtx.Client.GetCanvasState(orgID, nodeID, "main")
 		if err != nil {
 			return fmt.Errorf("fetching node: %w", err)
 		}
 
 		if appCtx.Format == "json" {
-			return output.RenderJSON(os.Stdout, complete)
+			return output.RenderJSON(os.Stdout, canvas)
 		}
 
-		detailLines := renderNodeDetails(complete)
+		complete, childTags := canvasToComplete(canvas, nodeID)
+		if complete == nil {
+			return fmt.Errorf("node %s not found in canvas response", nodeID)
+		}
 
-		// If node has children, render canvas alongside details
+		termWidth := getTerminalWidth()
+
+		headerLines := renderNodeHeader(complete)
 		canvasLines := renderCanvasLines(complete, false)
-		if len(canvasLines) > 0 {
-			// Shift canvas down so it starts below the title/separator
-			padded := make([]string, 0, 2+len(canvasLines))
-			padded = append(padded, "", "")
-			padded = append(padded, canvasLines...)
-			canvasLines = padded
+		connLines := renderConnectionsBlock(complete)
 
-			termWidth := getTerminalWidth()
-			combined := renderSideBySide(detailLines, canvasLines, 4, termWidth)
-			for _, line := range combined {
+		// Right panel = diagram + connections list beneath it.
+		var rightLines []string
+		if len(canvasLines) > 0 {
+			// Shift diagram down 2 lines so it sits below the title underline.
+			rightLines = append(rightLines, "", "")
+			rightLines = append(rightLines, canvasLines...)
+			if len(connLines) > 0 {
+				rightLines = append(rightLines, "")
+				rightLines = append(rightLines, connLines...)
+			}
+		}
+
+		if len(rightLines) > 0 {
+			top := renderSideBySide(headerLines, rightLines, 4, termWidth)
+			for _, line := range top {
 				fmt.Println(line)
 			}
 		} else {
-			for _, line := range detailLines {
+			for _, line := range headerLines {
 				fmt.Println(line)
 			}
+		}
+
+		// Bottom band: parents, children-with-tags, ingress/egress.
+		for _, line := range renderRelationships(complete, childTags) {
+			fmt.Println(line)
 		}
 		return nil
 	},
 }
 
-func renderNodeDetails(n *api.CompleteNode) []string {
+// canvasToComplete extracts the parent entry from a canvas response and builds
+// a CompleteNode view for the existing renderers. It also returns a map of
+// child node ID → tags for rendering child tags inline.
+func canvasToComplete(canvas api.CanvasResponse, nodeID string) (*api.CompleteNode, map[string]map[string]any) {
+	parent, ok := canvas[nodeID]
+	if !ok || parent == nil {
+		return nil, nil
+	}
+
+	children := make([]api.NodeSummary, 0, len(parent.ChildNodes))
+	childTags := make(map[string]map[string]any, len(parent.ChildNodes))
+	for _, ref := range parent.ChildNodes {
+		title := ref.Title
+		desc := ref.Description
+		if entry, ok := canvas[ref.ID]; ok && entry != nil {
+			if entry.Title != "" {
+				title = entry.Title
+			}
+			if entry.Description != "" {
+				desc = entry.Description
+			}
+			if len(entry.Tags) > 0 {
+				childTags[ref.ID] = entry.Tags
+			}
+		}
+		children = append(children, api.NodeSummary{
+			ID:          ref.ID,
+			Title:       title,
+			Description: desc,
+		})
+	}
+
+	return &api.CompleteNode{
+		Node: api.NodeDetail{
+			ID:          parent.ID,
+			Title:       parent.Title,
+			Description: parent.Description,
+			OrgID:       parent.OrgID,
+		},
+		Tags:             parent.Tags,
+		Directories:      parent.Directories,
+		ChildNodes:       children,
+		ParentNodes:      parent.ParentNodes,
+		VisualProperties: parent.VisualProperties,
+		Connections:      parent.Connections,
+		IngressConns:     parent.IngressConns,
+		EgressConns:      parent.EgressConns,
+		Metadata:         parent.Metadata,
+	}, childTags
+}
+
+// renderNodeHeader emits the top-left panel: title, IDs, description, tags,
+// and directories for the node itself. Relationships (parents/children/
+// connections) are emitted separately by renderRelationships so the layout
+// can place the header beside the diagram and run relationships full-width
+// below.
+func renderNodeHeader(n *api.CompleteNode) []string {
 	var lines []string
 
 	lines = append(lines, n.Node.Title)
@@ -151,41 +224,12 @@ func renderNodeDetails(n *api.CompleteNode) []string {
 		lines = append(lines, fmt.Sprintf("  Org ID:       %s", config.ShortID(n.Node.OrgID)))
 	}
 
-	// Tags
 	if len(n.Tags) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, "  Tags:")
-		type tagPair struct{ key, value, link string }
-		var tags []tagPair
-		for k, v := range n.Tags {
-			val := ""
-			link := ""
-			switch t := v.(type) {
-			case map[string]any:
-				if value, ok := t["value"]; ok {
-					val = fmt.Sprintf("%v", value)
-				}
-				if l, ok := t["link"]; ok && l != nil {
-					link = fmt.Sprintf("%v", l)
-				}
-			default:
-				val = fmt.Sprintf("%v", v)
-			}
-			tags = append(tags, tagPair{k, val, link})
-		}
-		sort.Slice(tags, func(i, j int) bool { return tags[i].key < tags[j].key })
-		for _, t := range tags {
-			if t.value != "" && t.link != "" {
-				lines = append(lines, fmt.Sprintf("    - %s: %s - %s", t.key, t.value, t.link))
-			} else if t.value != "" {
-				lines = append(lines, fmt.Sprintf("    - %s: %s", t.key, t.value))
-			} else {
-				lines = append(lines, fmt.Sprintf("    - %s", t.key))
-			}
-		}
+		lines = append(lines, formatParentTagLines(n.Tags, "    - ")...)
 	}
 
-	// Directories
 	if len(n.Directories) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, "  Directories:")
@@ -193,6 +237,15 @@ func renderNodeDetails(n *api.CompleteNode) []string {
 			lines = append(lines, fmt.Sprintf("    - %s", d))
 		}
 	}
+
+	return lines
+}
+
+// renderRelationships emits the bottom band: parents, children with tag
+// tables, and ingress/egress to external nodes. Connections between children
+// are rendered in the top band (next to the diagram) by renderConnectionsBlock.
+func renderRelationships(n *api.CompleteNode, childTags map[string]map[string]any) []string {
+	var lines []string
 
 	// Parents
 	lines = append(lines, "")
@@ -203,43 +256,16 @@ func renderNodeDetails(n *api.CompleteNode) []string {
 		lines = append(lines, "  0 Parents")
 	}
 
-	// Children
+	// Children (each child row followed by its tag table)
 	lines = append(lines, "")
 	if len(n.ChildNodes) > 0 {
 		lines = append(lines, fmt.Sprintf("  %d %s:", len(n.ChildNodes), pluralize("Child", len(n.ChildNodes))))
-		lines = append(lines, renderAlignedIDs(n.ChildNodes)...)
+		lines = append(lines, renderChildrenWithTags(n.ChildNodes, childTags)...)
 	} else {
 		lines = append(lines, "  0 Children")
 	}
 
-	// Internal connections (between children)
-	lines = append(lines, "")
-	if len(n.Connections) > 0 {
-		lines = append(lines, fmt.Sprintf("  %d %s:", len(n.Connections), pluralize("Connection", len(n.Connections))))
-		titles := make(map[string]string)
-		for _, c := range n.ChildNodes {
-			titles[c.ID] = c.Title
-		}
-		for _, conn := range n.Connections {
-			from := titles[conn.FromChild]
-			to := titles[conn.ToChild]
-			if from == "" {
-				from = conn.FromChild
-			}
-			if to == "" {
-				to = conn.ToChild
-			}
-			if conn.Label != "" {
-				lines = append(lines, fmt.Sprintf("    - %s → %s (%s)", from, to, conn.Label))
-			} else {
-				lines = append(lines, fmt.Sprintf("    - %s → %s", from, to))
-			}
-		}
-	} else {
-		lines = append(lines, "  0 Connections")
-	}
-
-	// Ingress connections
+	// Ingress
 	if len(n.IngressConns) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("  %d Ingress:", len(n.IngressConns)))
@@ -256,7 +282,7 @@ func renderNodeDetails(n *api.CompleteNode) []string {
 		}
 	}
 
-	// Egress connections
+	// Egress
 	if len(n.EgressConns) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("  %d Egress:", len(n.EgressConns)))
@@ -274,6 +300,168 @@ func renderNodeDetails(n *api.CompleteNode) []string {
 	}
 
 	return lines
+}
+
+// renderConnectionsBlock returns a compact list of child-to-child connections
+// to display beneath the architecture diagram in the top band.
+func renderConnectionsBlock(n *api.CompleteNode) []string {
+	if len(n.Connections) == 0 {
+		return nil
+	}
+	titles := make(map[string]string, len(n.ChildNodes))
+	for _, c := range n.ChildNodes {
+		titles[c.ID] = c.Title
+	}
+	lines := []string{fmt.Sprintf("%d %s:", len(n.Connections), pluralize("Connection", len(n.Connections)))}
+	for _, conn := range n.Connections {
+		from := titles[conn.FromChild]
+		to := titles[conn.ToChild]
+		if from == "" {
+			from = conn.FromChild
+		}
+		if to == "" {
+			to = conn.ToChild
+		}
+		if conn.Label != "" {
+			lines = append(lines, fmt.Sprintf("  - %s → %s (%s)", from, to, conn.Label))
+		} else {
+			lines = append(lines, fmt.Sprintf("  - %s → %s", from, to))
+		}
+	}
+	return lines
+}
+
+// formatParentTagLines formats the parent node's tags for the header panel.
+// Each tag takes one line: "<indent>key: value" or "<indent>key: value - link".
+func formatParentTagLines(tags map[string]any, indent string) []string {
+	type tagPair struct{ key, value, link string }
+	var pairs []tagPair
+	for k, v := range tags {
+		val := ""
+		link := ""
+		switch t := v.(type) {
+		case map[string]any:
+			if value, ok := t["value"]; ok {
+				val = fmt.Sprintf("%v", value)
+			}
+			if l, ok := t["link"]; ok && l != nil {
+				link = fmt.Sprintf("%v", l)
+			}
+		default:
+			val = fmt.Sprintf("%v", v)
+		}
+		pairs = append(pairs, tagPair{k, val, link})
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].key < pairs[j].key })
+
+	out := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		switch {
+		case p.value != "" && p.link != "":
+			out = append(out, fmt.Sprintf("%s%s: %s - %s", indent, p.key, p.value, p.link))
+		case p.value != "":
+			out = append(out, fmt.Sprintf("%s%s: %s", indent, p.key, p.value))
+		default:
+			out = append(out, fmt.Sprintf("%s%s", indent, p.key))
+		}
+	}
+	return out
+}
+
+// Constants for the child tag table layout.
+const (
+	childRowIndent = "    - " // bullet for "- Title  shortID"
+	tagRowIndent   = "      " // same indent as text after bullet
+	tagKeyColMin   = 8
+	tagKeyColMax   = 20
+)
+
+// renderChildrenWithTags renders each child as an aligned title/shortID row
+// followed by a 2-column tag table (key, value). If a tag has a separate
+// link, the link is emitted on the next indented line prefixed with "↳".
+// All value and link cells are truncated to fit within termWidth so long
+// ARNs and URLs don't spill the terminal.
+func renderChildrenWithTags(nodes []api.NodeSummary, tagsByID map[string]map[string]any) []string {
+	var lines []string
+
+	// Align title → shortID column across all children.
+	titleW := 0
+	for _, n := range nodes {
+		if len(n.Title) > titleW {
+			titleW = len(n.Title)
+		}
+	}
+
+	for i, n := range nodes {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		padding := titleW - len(n.Title) + 2
+		lines = append(lines, fmt.Sprintf("%s%s%s%s", childRowIndent, n.Title, strings.Repeat(" ", padding), config.ShortID(n.ID)))
+		lines = append(lines, formatChildTagTable(tagsByID[n.ID])...)
+	}
+	return lines
+}
+
+// formatChildTagTable builds a 2-column "key value" table for one child.
+// Values are emitted in full — agents (the primary consumer) need the real
+// ARNs and URLs for downstream tool calls. If a tag has a separate link, it
+// appears on its own line beneath the value, aligned under the value column.
+func formatChildTagTable(tags map[string]any) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Key column width = longest key among this child's tags, clamped.
+	keyW := tagKeyColMin
+	for _, k := range keys {
+		if len(k) > keyW {
+			keyW = len(k)
+		}
+	}
+	if keyW > tagKeyColMax {
+		keyW = tagKeyColMax
+	}
+
+	// Link sits one tab (4 spaces) further right than the value column, so
+	// it reads as subordinate to the value above it.
+	linkIndent := strings.Repeat(" ", len(tagRowIndent)+keyW+2+4)
+
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		v := tags[k]
+		val := ""
+		link := ""
+		switch t := v.(type) {
+		case map[string]any:
+			if value, ok := t["value"]; ok {
+				val = fmt.Sprintf("%v", value)
+			}
+			if l, ok := t["link"]; ok && l != nil {
+				link = fmt.Sprintf("%v", l)
+			}
+		default:
+			val = fmt.Sprintf("%v", v)
+		}
+
+		keyCell := k
+		if len(keyCell) > keyW {
+			keyCell = keyCell[:keyW]
+		}
+		keyCell = keyCell + strings.Repeat(" ", keyW-len(keyCell))
+
+		out = append(out, fmt.Sprintf("%s%s  %s", tagRowIndent, keyCell, val))
+		if link != "" && link != val {
+			out = append(out, fmt.Sprintf("%s↳ %s", linkIndent, link))
+		}
+	}
+	return out
 }
 
 func pluralize(word string, count int) string {
