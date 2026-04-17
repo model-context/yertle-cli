@@ -3,55 +3,12 @@ package cmd
 import (
 	"fmt"
 	"math"
-	"os"
 	"sort"
 	"strings"
 
 	"github.com/albertcmiller1/flow/cli/api"
 	"github.com/albertcmiller1/flow/cli/config"
-	"github.com/albertcmiller1/flow/cli/output"
-	"github.com/spf13/cobra"
 )
-
-var canvasCmd = &cobra.Command{
-	Use:   "canvas <node-id>",
-	Short: "Render an ASCII architecture diagram of a node's children",
-	Long:  "Display a node's child components and their connections as a box-and-arrow diagram in the terminal.",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		appCtx := GetAppContext(cmd)
-
-		if err := ensureAuth(appCtx); err != nil {
-			return err
-		}
-
-		nodeID, cachedOrgID, _ := appCtx.Cache.Resolve(args[0])
-		orgID := appCtx.OrgID
-		if (orgID == "" || orgID == "all") && cachedOrgID != "" {
-			orgID = cachedOrgID
-		}
-		if orgID == "" || orgID == "all" {
-			return fmt.Errorf("organization required — use --org flag or run 'yertle tree' first to populate the cache")
-		}
-
-		complete, err := appCtx.Client.GetCompleteNode(orgID, nodeID, "main")
-		if err != nil {
-			return fmt.Errorf("fetching node: %w", err)
-		}
-
-		if appCtx.Format == "json" {
-			return output.RenderJSON(os.Stdout, complete)
-		}
-
-		if len(complete.ChildNodes) == 0 {
-			fmt.Printf("%s has no children to display.\n", complete.Node.Title)
-			return nil
-		}
-
-		renderCanvas(complete)
-		return nil
-	},
-}
 
 // --- Canvas rendering ---
 
@@ -79,10 +36,13 @@ type canvasNode struct {
 	boxW  int // rendered box width (chars)
 }
 
-func renderCanvas(complete *api.CompleteNode) {
-	fmt.Printf("%s\n", complete.Node.Title)
-	fmt.Println(strings.Repeat("─", 40))
-	fmt.Println()
+// renderCanvasLines builds an ASCII box-and-arrow diagram of a node's children.
+// If includeFooter is true, connections that couldn't be drawn visually are listed
+// at the bottom. Returns nil if there are no children or no positioned nodes.
+func renderCanvasLines(complete *api.CompleteNode, includeFooter bool) []string {
+	if len(complete.ChildNodes) == 0 {
+		return nil
+	}
 
 	// Build position map from visual properties
 	posMap := make(map[string]api.VisualProperty)
@@ -117,9 +77,10 @@ func renderCanvas(complete *api.CompleteNode) {
 	}
 
 	if len(nodes) == 0 {
-		fmt.Println("  (no positioned nodes)")
-		return
+		return nil
 	}
+
+	var lines []string
 
 	// Quantize positions into grid rows and columns
 	gridRows, numCols := quantizeGrid(nodes)
@@ -157,16 +118,20 @@ func renderCanvas(complete *api.CompleteNode) {
 
 	// Render each row
 	for rowIdx := range grid {
-		renderGridRow(grid[rowIdx], colWidths, conns, nodeGridR, nodeGridC)
+		lines = append(lines, renderGridRowLines(grid[rowIdx], colWidths, conns, nodeGridR, nodeGridC)...)
 
 		// Draw vertical arrows to next row
 		if rowIdx < len(grid)-1 {
 			vertConns := findVertConns(conns, grid[rowIdx], grid[rowIdx+1], nodeGridR)
-			renderVertArrows(grid[rowIdx], colWidths, vertConns)
+			lines = append(lines, renderVertArrowLines(grid[rowIdx], colWidths, vertConns)...)
 		}
 	}
 
-	// Print connections that couldn't be drawn visually
+	if !includeFooter {
+		return lines
+	}
+
+	// Append connections that couldn't be drawn visually
 	var undrawn []connInfo
 	for _, c := range conns {
 		fromR, fromOk := nodeGridR[c.fromID]
@@ -174,7 +139,6 @@ func renderCanvas(complete *api.CompleteNode) {
 		if !fromOk || !toOk {
 			continue
 		}
-		// Same row, directly adjacent columns (left to right) — drawn as horizontal arrow
 		if fromR == toR {
 			fromC := nodeGridC[c.fromID]
 			toC := nodeGridC[c.toID]
@@ -182,7 +146,6 @@ func renderCanvas(complete *api.CompleteNode) {
 				continue
 			}
 		}
-		// Adjacent rows, same column — drawn as vertical arrow
 		if toR-fromR == 1 {
 			fromC := nodeGridC[c.fromID]
 			toC := nodeGridC[c.toID]
@@ -193,8 +156,8 @@ func renderCanvas(complete *api.CompleteNode) {
 		undrawn = append(undrawn, c)
 	}
 	if len(undrawn) > 0 {
-		fmt.Println()
-		fmt.Println("  Other connections:")
+		lines = append(lines, "")
+		lines = append(lines, "  Other connections:")
 		for _, c := range undrawn {
 			from := titleMap[c.fromID]
 			to := titleMap[c.toID]
@@ -205,12 +168,14 @@ func renderCanvas(complete *api.CompleteNode) {
 				to = config.ShortID(c.toID)
 			}
 			if c.label != "" {
-				fmt.Printf("    - %s → %s (%s)\n", from, to, c.label)
+				lines = append(lines, fmt.Sprintf("    - %s → %s (%s)", from, to, c.label))
 			} else {
-				fmt.Printf("    - %s → %s\n", from, to)
+				lines = append(lines, fmt.Sprintf("    - %s → %s", from, to))
 			}
 		}
 	}
+
+	return lines
 }
 
 // quantizeGrid assigns gridR and gridC to each node based on clustering raw positions.
@@ -273,13 +238,12 @@ func clusterValues(nodes []*canvasNode, getVal func(*canvasNode) int, threshold 
 	return slotMap
 }
 
-// renderGridRow draws a row of the grid, with empty slots where no node exists.
-func renderGridRow(row []*canvasNode, colWidths []int, conns []connInfo, nodeGridR, nodeGridC map[string]int) {
+// renderGridRowLines builds the three lines (top border, title, bottom border) for a grid row.
+func renderGridRowLines(row []*canvasNode, colWidths []int, conns []connInfo, nodeGridR, nodeGridC map[string]int) []string {
 	numCols := len(colWidths)
 
 	// Determine which gaps have horizontal arrows.
-	// Only draw when from is directly left of to (fromC + 1 == toC) — simple, straight-line connections.
-	hasArrow := make(map[int]bool) // gap after column i
+	hasArrow := make(map[int]bool)
 
 	for _, c := range conns {
 		fromR, fromOk := nodeGridR[c.fromID]
@@ -289,11 +253,9 @@ func renderGridRow(row []*canvasNode, colWidths []int, conns []connInfo, nodeGri
 		}
 		fromC := nodeGridC[c.fromID]
 		toC := nodeGridC[c.toID]
-		// Only draw left-to-right, directly adjacent columns
 		if toC-fromC != 1 {
 			continue
 		}
-		// Check from node is in this row
 		if row[fromC] == nil || row[fromC].id != c.fromID {
 			continue
 		}
@@ -315,7 +277,6 @@ func renderGridRow(row []*canvasNode, colWidths []int, conns []connInfo, nodeGri
 			line1.WriteString(strings.Repeat(" ", colWidths[c]))
 		}
 	}
-	fmt.Println(line1.String())
 
 	// Line 2: titles with arrows
 	var line2 strings.Builder
@@ -347,14 +308,12 @@ func renderGridRow(row []*canvasNode, colWidths []int, conns []connInfo, nodeGri
 			line2.WriteString("│")
 		} else {
 			if hasArrow[c-1] && c < numCols-1 && hasArrow[c] {
-				// Empty cell in the middle of an arrow path — draw continuation
 				line2.WriteString(strings.Repeat("─", colWidths[c]))
 			} else {
 				line2.WriteString(strings.Repeat(" ", colWidths[c]))
 			}
 		}
 	}
-	fmt.Println(line2.String())
 
 	// Line 3: bottom borders
 	var line3 strings.Builder
@@ -371,7 +330,8 @@ func renderGridRow(row []*canvasNode, colWidths []int, conns []connInfo, nodeGri
 			line3.WriteString(strings.Repeat(" ", colWidths[c]))
 		}
 	}
-	fmt.Println(line3.String())
+
+	return []string{line1.String(), line2.String(), line3.String()}
 }
 
 // findVertConns returns connections from a node in topRow to a node in bottomRow
@@ -412,11 +372,10 @@ func findVertConns(conns []connInfo, topRow, bottomRow []*canvasNode, nodeGridR 
 	return result
 }
 
-// renderVertArrows draws vertical arrows between two rows.
-func renderVertArrows(topRow []*canvasNode, colWidths []int, conns []connInfo) {
+// renderVertArrowLines builds the vertical arrow lines between two rows.
+func renderVertArrowLines(topRow []*canvasNode, colWidths []int, conns []connInfo) []string {
 	if len(conns) == 0 {
-		fmt.Println()
-		return
+		return []string{""}
 	}
 
 	// Find which columns have downward arrows
@@ -430,6 +389,7 @@ func renderVertArrows(topRow []*canvasNode, colWidths []int, conns []connInfo) {
 	}
 
 	numCols := len(colWidths)
+	var lines []string
 
 	// Draw two lines: │ then ↓
 	for _, ch := range []string{"│", "↓"} {
@@ -449,6 +409,8 @@ func renderVertArrows(topRow []*canvasNode, colWidths []int, conns []connInfo) {
 				line.WriteString(strings.Repeat(" ", w))
 			}
 		}
-		fmt.Println(line.String())
+		lines = append(lines, line.String())
 	}
+
+	return lines
 }

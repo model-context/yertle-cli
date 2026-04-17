@@ -124,7 +124,6 @@ func init() {
 	rootCmd.AddCommand(orgsCmd)
 	rootCmd.AddCommand(nodesCmd)
 	rootCmd.AddCommand(treeCmd)
-	rootCmd.AddCommand(canvasCmd)
 	rootCmd.AddCommand(monitorCmd)
 
 	// Custom help template that shows all subcommands expanded
@@ -138,10 +137,9 @@ Available Commands:
   orgs                     List organizations you belong to
   orgs   <org-id>          Show detailed information about an org
   nodes                    List all nodes
-  nodes  <node-id>         Show detailed information about a node
+  nodes  <node-id>         Show node details and architecture diagram
   tree                     Display the containment hierarchy (all orgs)
   tree   <org-id>          Display the containment hierarchy (one org)
-  canvas <node-id>         Render an ASCII architecture diagram
   config                   Show current configuration
   monitor                  Live health dashboard (coming soon)
 
