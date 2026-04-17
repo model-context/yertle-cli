@@ -155,7 +155,10 @@ type CanvasEntry struct {
 	ChildNodes       []ChildRef       `json:"child_nodes"`
 	VisualProperties []VisualProperty `json:"visual_properties"`
 	Connections      []Connection     `json:"connections"`
-	ParentNodes      []NodeSummary    `json:"parent_nodes"`
+	// ParentNodes accepts either a list of {id,title,description} stubs (slim
+	// mode, the API default) or a list of UUID strings (include_parents=full,
+	// where each parent also appears as a top-level entry in the response map).
+	ParentNodes []ChildRef `json:"parent_nodes"`
 	IngressConns     []ExternalConn   `json:"ingress_connections"`
 	EgressConns      []ExternalConn   `json:"egress_connections"`
 	Metadata         map[string]any   `json:"metadata"`
@@ -194,7 +197,7 @@ func (c *ChildRef) UnmarshalJSON(data []byte) error {
 type CanvasResponse map[string]*CanvasEntry
 
 func (c *Client) GetCanvasState(orgID, nodeID, branch string) (CanvasResponse, error) {
-	path := fmt.Sprintf("/orgs/%s/nodes/%s/tree/%s/canvas", orgID, nodeID, branch)
+	path := fmt.Sprintf("/orgs/%s/nodes/%s/tree/%s/canvas?include_parents=full", orgID, nodeID, branch)
 	resp := CanvasResponse{}
 	if err := c.Get(path, &resp); err != nil {
 		return nil, err

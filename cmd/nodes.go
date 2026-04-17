@@ -111,7 +111,7 @@ var nodesShowCmd = &cobra.Command{
 			return output.RenderJSON(os.Stdout, canvas)
 		}
 
-		complete, childTags := canvasToComplete(canvas, nodeID)
+		complete := canvasToComplete(canvas, nodeID)
 		if complete == nil {
 			return fmt.Errorf("node %s not found in canvas response", nodeID)
 		}
@@ -119,71 +119,55 @@ var nodesShowCmd = &cobra.Command{
 		termWidth := getTerminalWidth()
 
 		headerLines := renderNodeHeader(complete)
-		canvasLines := renderCanvasLines(complete, false)
 		connLines := renderConnectionsBlock(complete)
+		canvasLines := renderCanvasLines(complete, false)
 
-		// Right panel = diagram + connections list beneath it.
+		// Left column = header + (if any) connections list beneath it.
+		leftLines := headerLines
+		if len(connLines) > 0 {
+			leftLines = append(leftLines, "")
+			leftLines = append(leftLines, connLines...)
+		}
+
+		// Right column = diagram alone (shifted down 2 lines to align under
+		// the title underline).
 		var rightLines []string
 		if len(canvasLines) > 0 {
-			// Shift diagram down 2 lines so it sits below the title underline.
 			rightLines = append(rightLines, "", "")
 			rightLines = append(rightLines, canvasLines...)
-			if len(connLines) > 0 {
-				rightLines = append(rightLines, "")
-				rightLines = append(rightLines, connLines...)
-			}
 		}
 
 		if len(rightLines) > 0 {
-			top := renderSideBySide(headerLines, rightLines, 4, termWidth)
+			top := renderSideBySide(leftLines, rightLines, 4, termWidth)
 			for _, line := range top {
 				fmt.Println(line)
 			}
 		} else {
-			for _, line := range headerLines {
+			for _, line := range leftLines {
 				fmt.Println(line)
 			}
 		}
 
-		// Bottom band: parents, children-with-tags, ingress/egress.
-		for _, line := range renderRelationships(complete, childTags) {
+		// Bottom band: parents, child cards, ingress/egress.
+		for _, line := range renderRelationships(complete, canvas) {
 			fmt.Println(line)
 		}
 		return nil
 	},
 }
 
-// canvasToComplete extracts the parent entry from a canvas response and builds
-// a CompleteNode view for the existing renderers. It also returns a map of
-// child node ID → tags for rendering child tags inline.
-func canvasToComplete(canvas api.CanvasResponse, nodeID string) (*api.CompleteNode, map[string]map[string]any) {
+// canvasToComplete extracts the parent entry from a canvas response and
+// builds a CompleteNode view for the existing parent-level renderers. Child
+// details (tags, grandchildren, etc.) are read directly from the canvas map
+// by renderChildCards, so they are not duplicated here.
+func canvasToComplete(canvas api.CanvasResponse, nodeID string) *api.CompleteNode {
 	parent, ok := canvas[nodeID]
 	if !ok || parent == nil {
-		return nil, nil
+		return nil
 	}
 
-	children := make([]api.NodeSummary, 0, len(parent.ChildNodes))
-	childTags := make(map[string]map[string]any, len(parent.ChildNodes))
-	for _, ref := range parent.ChildNodes {
-		title := ref.Title
-		desc := ref.Description
-		if entry, ok := canvas[ref.ID]; ok && entry != nil {
-			if entry.Title != "" {
-				title = entry.Title
-			}
-			if entry.Description != "" {
-				desc = entry.Description
-			}
-			if len(entry.Tags) > 0 {
-				childTags[ref.ID] = entry.Tags
-			}
-		}
-		children = append(children, api.NodeSummary{
-			ID:          ref.ID,
-			Title:       title,
-			Description: desc,
-		})
-	}
+	children := resolveNodeRefs(parent.ChildNodes, canvas)
+	parents := resolveNodeRefs(parent.ParentNodes, canvas)
 
 	return &api.CompleteNode{
 		Node: api.NodeDetail{
@@ -195,13 +179,40 @@ func canvasToComplete(canvas api.CanvasResponse, nodeID string) (*api.CompleteNo
 		Tags:             parent.Tags,
 		Directories:      parent.Directories,
 		ChildNodes:       children,
-		ParentNodes:      parent.ParentNodes,
+		ParentNodes:      parents,
 		VisualProperties: parent.VisualProperties,
 		Connections:      parent.Connections,
 		IngressConns:     parent.IngressConns,
 		EgressConns:      parent.EgressConns,
 		Metadata:         parent.Metadata,
-	}, childTags
+	}
+}
+
+// resolveNodeRefs turns a list of node references (which may be bare UUIDs or
+// {id,title,description} stubs) into NodeSummary values, falling back to the
+// canvas map when a ref lacks title/description fields (the include_parents=
+// full path always returns bare UUIDs, expecting the caller to look up full
+// state from the top-level canvas entries).
+func resolveNodeRefs(refs []api.ChildRef, canvas api.CanvasResponse) []api.NodeSummary {
+	out := make([]api.NodeSummary, 0, len(refs))
+	for _, ref := range refs {
+		title := ref.Title
+		desc := ref.Description
+		if entry, ok := canvas[ref.ID]; ok && entry != nil {
+			if entry.Title != "" {
+				title = entry.Title
+			}
+			if entry.Description != "" {
+				desc = entry.Description
+			}
+		}
+		out = append(out, api.NodeSummary{
+			ID:          ref.ID,
+			Title:       title,
+			Description: desc,
+		})
+	}
+	return out
 }
 
 // renderNodeHeader emits the top-left panel: title, IDs, description, tags,
@@ -209,65 +220,76 @@ func canvasToComplete(canvas api.CanvasResponse, nodeID string) (*api.CompleteNo
 // connections) are emitted separately by renderRelationships so the layout
 // can place the header beside the diagram and run relationships full-width
 // below.
+const emptyValue = "—"
+
 func renderNodeHeader(n *api.CompleteNode) []string {
 	var lines []string
 
 	lines = append(lines, n.Node.Title)
 	lines = append(lines, strings.Repeat("─", 40))
 
-	if n.Node.Description != "" {
-		lines = append(lines, fmt.Sprintf("  Description:  %s", n.Node.Description))
+	desc := n.Node.Description
+	if desc == "" {
+		desc = emptyValue
 	}
+	lines = append(lines, fmt.Sprintf("  Description:  %s", desc))
 
 	lines = append(lines, fmt.Sprintf("  Node ID:      %s", config.ShortID(n.Node.ID)))
-	if n.Node.OrgID != "" {
-		lines = append(lines, fmt.Sprintf("  Org ID:       %s", config.ShortID(n.Node.OrgID)))
+	orgID := config.ShortID(n.Node.OrgID)
+	if orgID == "" {
+		orgID = emptyValue
 	}
+	lines = append(lines, fmt.Sprintf("  Org ID:       %s", orgID))
 
+	lines = append(lines, "")
 	if len(n.Tags) > 0 {
-		lines = append(lines, "")
 		lines = append(lines, "  Tags:")
 		lines = append(lines, formatParentTagLines(n.Tags, "    - ")...)
+	} else {
+		lines = append(lines, fmt.Sprintf("  Tags:         %s", emptyValue))
 	}
 
+	lines = append(lines, "")
 	if len(n.Directories) > 0 {
-		lines = append(lines, "")
 		lines = append(lines, "  Directories:")
 		for _, d := range n.Directories {
 			lines = append(lines, fmt.Sprintf("    - %s", d))
 		}
+	} else {
+		lines = append(lines, fmt.Sprintf("  Directories:  %s", emptyValue))
 	}
 
 	return lines
 }
 
-// renderRelationships emits the bottom band: parents, children with tag
-// tables, and ingress/egress to external nodes. Connections between children
-// are rendered in the top band (next to the diagram) by renderConnectionsBlock.
-func renderRelationships(n *api.CompleteNode, childTags map[string]map[string]any) []string {
+// renderRelationships emits the bottom band: parents, one card per child,
+// and ingress/egress to external nodes. Connections between children are
+// rendered in the top band (next to the diagram) by renderConnectionsBlock.
+func renderRelationships(n *api.CompleteNode, canvas api.CanvasResponse) []string {
 	var lines []string
 
-	// Parents
+	// Parents — one card per parent (same shape as children), populated from
+	// the top-level canvas entries emitted by include_parents=full.
 	lines = append(lines, "")
 	if len(n.ParentNodes) > 0 {
 		lines = append(lines, fmt.Sprintf("  %d %s:", len(n.ParentNodes), pluralize("Parent", len(n.ParentNodes))))
-		lines = append(lines, renderAlignedIDs(n.ParentNodes)...)
+		lines = append(lines, renderChildCards(n.ParentNodes, canvas)...)
 	} else {
 		lines = append(lines, "  0 Parents")
 	}
 
-	// Children (each child row followed by its tag table)
+	// Children — one card per child
 	lines = append(lines, "")
 	if len(n.ChildNodes) > 0 {
 		lines = append(lines, fmt.Sprintf("  %d %s:", len(n.ChildNodes), pluralize("Child", len(n.ChildNodes))))
-		lines = append(lines, renderChildrenWithTags(n.ChildNodes, childTags)...)
+		lines = append(lines, renderChildCards(n.ChildNodes, canvas)...)
 	} else {
 		lines = append(lines, "  0 Children")
 	}
 
 	// Ingress
+	lines = append(lines, "")
 	if len(n.IngressConns) > 0 {
-		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("  %d Ingress:", len(n.IngressConns)))
 		for _, conn := range n.IngressConns {
 			name := conn.ConnectedNode.Title
@@ -280,11 +302,13 @@ func renderRelationships(n *api.CompleteNode, childTags map[string]map[string]an
 				lines = append(lines, fmt.Sprintf("    - %s → this", name))
 			}
 		}
+	} else {
+		lines = append(lines, "  0 Ingress")
 	}
 
 	// Egress
+	lines = append(lines, "")
 	if len(n.EgressConns) > 0 {
-		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("  %d Egress:", len(n.EgressConns)))
 		for _, conn := range n.EgressConns {
 			name := conn.ConnectedNode.Title
@@ -297,22 +321,25 @@ func renderRelationships(n *api.CompleteNode, childTags map[string]map[string]an
 				lines = append(lines, fmt.Sprintf("    - this → %s", name))
 			}
 		}
+	} else {
+		lines = append(lines, "  0 Egress")
 	}
 
 	return lines
 }
 
-// renderConnectionsBlock returns a compact list of child-to-child connections
-// to display beneath the architecture diagram in the top band.
+// renderConnectionsBlock returns a compact list of child-to-child
+// connections for the left-hand data column (beneath the header). Indent
+// matches the header panel style: 2 spaces for the label line, 4 for bullets.
 func renderConnectionsBlock(n *api.CompleteNode) []string {
 	if len(n.Connections) == 0 {
-		return nil
+		return []string{fmt.Sprintf("  %d Connections:  %s", 0, emptyValue)}
 	}
 	titles := make(map[string]string, len(n.ChildNodes))
 	for _, c := range n.ChildNodes {
 		titles[c.ID] = c.Title
 	}
-	lines := []string{fmt.Sprintf("%d %s:", len(n.Connections), pluralize("Connection", len(n.Connections)))}
+	lines := []string{fmt.Sprintf("  %d %s:", len(n.Connections), pluralize("Connection", len(n.Connections)))}
 	for _, conn := range n.Connections {
 		from := titles[conn.FromChild]
 		to := titles[conn.ToChild]
@@ -323,9 +350,9 @@ func renderConnectionsBlock(n *api.CompleteNode) []string {
 			to = conn.ToChild
 		}
 		if conn.Label != "" {
-			lines = append(lines, fmt.Sprintf("  - %s → %s (%s)", from, to, conn.Label))
+			lines = append(lines, fmt.Sprintf("    - %s → %s (%s)", from, to, conn.Label))
 		} else {
-			lines = append(lines, fmt.Sprintf("  - %s → %s", from, to))
+			lines = append(lines, fmt.Sprintf("    - %s → %s", from, to))
 		}
 	}
 	return lines
@@ -368,46 +395,118 @@ func formatParentTagLines(tags map[string]any, indent string) []string {
 	return out
 }
 
-// Constants for the child tag table layout.
+// Layout constants for child cards.
 const (
-	childRowIndent = "    - " // bullet for "- Title  shortID"
-	tagRowIndent   = "      " // same indent as text after bullet
-	tagKeyColMin   = 8
-	tagKeyColMax   = 20
+	cardHeaderIndent = "    ● " // bullet for card header "● Title  shortID"
+	cardBodyIndent   = "      " // description / section labels
+	cardTagIndent    = "        " // tag rows, one level deeper than body
+	cardSubIndent    = "      " // sub-diagram indent
+	tagKeyColMin     = 8
+	tagKeyColMax     = 20
 )
 
-// renderChildrenWithTags renders each child as an aligned title/shortID row
-// followed by a 2-column tag table (key, value). If a tag has a separate
-// link, the link is emitted on the next indented line prefixed with "↳".
-// All value and link cells are truncated to fit within termWidth so long
-// ARNs and URLs don't spill the terminal.
-func renderChildrenWithTags(nodes []api.NodeSummary, tagsByID map[string]map[string]any) []string {
+// renderChildCards emits one "card" per child: a header row with the child's
+// title + shortID, then (optionally) description, tag table, a summary line
+// for contained structure, and an inline sub-diagram if the child has ≥2
+// grandchildren with visual properties. Leaf children render as just the
+// header + tags.
+func renderChildCards(nodes []api.NodeSummary, canvas api.CanvasResponse) []string {
 	var lines []string
-
-	// Align title → shortID column across all children.
-	titleW := 0
-	for _, n := range nodes {
-		if len(n.Title) > titleW {
-			titleW = len(n.Title)
-		}
-	}
-
 	for i, n := range nodes {
 		if i > 0 {
 			lines = append(lines, "")
 		}
-		padding := titleW - len(n.Title) + 2
-		lines = append(lines, fmt.Sprintf("%s%s%s%s", childRowIndent, n.Title, strings.Repeat(" ", padding), config.ShortID(n.ID)))
-		lines = append(lines, formatChildTagTable(tagsByID[n.ID])...)
+		lines = append(lines, renderOneChildCard(n, canvas[n.ID])...)
 	}
 	return lines
 }
 
-// formatChildTagTable builds a 2-column "key value" table for one child.
-// Values are emitted in full — agents (the primary consumer) need the real
-// ARNs and URLs for downstream tool calls. If a tag has a separate link, it
-// appears on its own line beneath the value, aligned under the value column.
-func formatChildTagTable(tags map[string]any) []string {
+// renderOneChildCard builds the lines for a single child card. `entry` may
+// be nil if the canvas response didn't include a standalone entry for the
+// child (shouldn't happen in practice, but handled defensively).
+func renderOneChildCard(child api.NodeSummary, entry *api.CanvasEntry) []string {
+	var lines []string
+
+	// Header
+	lines = append(lines, fmt.Sprintf("%s%s  %s", cardHeaderIndent, child.Title, config.ShortID(child.ID)))
+
+	if entry == nil {
+		return lines
+	}
+
+	// Description
+	desc := entry.Description
+	if desc == "" {
+		desc = emptyValue
+	}
+	lines = append(lines, fmt.Sprintf("%sDescription:  %s", cardBodyIndent, desc))
+
+	// Directories
+	if len(entry.Directories) > 0 {
+		lines = append(lines, fmt.Sprintf("%sDirectories:", cardBodyIndent))
+		for _, d := range entry.Directories {
+			lines = append(lines, fmt.Sprintf("%s- %s", cardTagIndent, d))
+		}
+	} else {
+		lines = append(lines, fmt.Sprintf("%sDirectories:  %s", cardBodyIndent, emptyValue))
+	}
+
+	// Contains summary — always shown, even if zero/zero, so agents can
+	// distinguish "leaf node" from "field omitted".
+	gcCount := len(entry.ChildNodes)
+	connCount := len(entry.Connections)
+	lines = append(lines, fmt.Sprintf("%sContains:     %d %s, %d %s",
+		cardBodyIndent,
+		gcCount, pluralize("child", gcCount),
+		connCount, pluralize("connection", connCount),
+	))
+
+	// Inline sub-diagram when the child has real sub-architecture.
+	if gcCount >= 2 && len(entry.VisualProperties) >= 2 {
+		if sub := buildSubDiagram(entry); len(sub) > 0 {
+			lines = append(lines, "")
+			for _, l := range sub {
+				lines = append(lines, cardSubIndent+l)
+			}
+		}
+	}
+
+	// Tags last — often the most cluttered section (ARNs, URLs), so we
+	// keep it at the bottom of each card.
+	if len(entry.Tags) > 0 {
+		lines = append(lines, fmt.Sprintf("%sTags:", cardBodyIndent))
+		lines = append(lines, formatChildTagTable(entry.Tags, cardTagIndent)...)
+	} else {
+		lines = append(lines, fmt.Sprintf("%sTags:         %s", cardBodyIndent, emptyValue))
+	}
+
+	return lines
+}
+
+// buildSubDiagram synthesizes a minimal CompleteNode view of a child's
+// internal structure and reuses the existing canvas renderer.
+func buildSubDiagram(entry *api.CanvasEntry) []string {
+	gcs := make([]api.NodeSummary, 0, len(entry.ChildNodes))
+	for _, ref := range entry.ChildNodes {
+		gcs = append(gcs, api.NodeSummary{
+			ID:          ref.ID,
+			Title:       ref.Title,
+			Description: ref.Description,
+		})
+	}
+	synthetic := &api.CompleteNode{
+		ChildNodes:       gcs,
+		VisualProperties: entry.VisualProperties,
+		Connections:      entry.Connections,
+	}
+	return renderCanvasLines(synthetic, false)
+}
+
+// formatChildTagTable builds a 2-column "key value" table for one child's
+// tags, indented by `indent`. Values are emitted in full so agents get the
+// real ARNs. Tag `link` fields are intentionally NOT rendered here — they
+// double every row visually and are available losslessly via --format json.
+func formatChildTagTable(tags map[string]any, indent string) []string {
 	if len(tags) == 0 {
 		return nil
 	}
@@ -418,7 +517,6 @@ func formatChildTagTable(tags map[string]any) []string {
 	}
 	sort.Strings(keys)
 
-	// Key column width = longest key among this child's tags, clamped.
 	keyW := tagKeyColMin
 	for _, k := range keys {
 		if len(k) > keyW {
@@ -429,24 +527,15 @@ func formatChildTagTable(tags map[string]any) []string {
 		keyW = tagKeyColMax
 	}
 
-	// Link sits one tab (4 spaces) further right than the value column, so
-	// it reads as subordinate to the value above it.
-	linkIndent := strings.Repeat(" ", len(tagRowIndent)+keyW+2+4)
-
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {
 		v := tags[k]
 		val := ""
-		link := ""
-		switch t := v.(type) {
-		case map[string]any:
+		if t, ok := v.(map[string]any); ok {
 			if value, ok := t["value"]; ok {
 				val = fmt.Sprintf("%v", value)
 			}
-			if l, ok := t["link"]; ok && l != nil {
-				link = fmt.Sprintf("%v", l)
-			}
-		default:
+		} else {
 			val = fmt.Sprintf("%v", v)
 		}
 
@@ -456,10 +545,7 @@ func formatChildTagTable(tags map[string]any) []string {
 		}
 		keyCell = keyCell + strings.Repeat(" ", keyW-len(keyCell))
 
-		out = append(out, fmt.Sprintf("%s%s  %s", tagRowIndent, keyCell, val))
-		if link != "" && link != val {
-			out = append(out, fmt.Sprintf("%s↳ %s", linkIndent, link))
-		}
+		out = append(out, fmt.Sprintf("%s%s  %s", indent, keyCell, val))
 	}
 	return out
 }
@@ -468,25 +554,13 @@ func pluralize(word string, count int) string {
 	if count == 1 {
 		return word
 	}
-	if word == "Child" {
+	switch word {
+	case "Child":
 		return "Children"
+	case "child":
+		return "children"
 	}
 	return word + "s"
-}
-
-func renderAlignedIDs(nodes []api.NodeSummary) []string {
-	var lines []string
-	maxW := 0
-	for _, n := range nodes {
-		if len(n.Title) > maxW {
-			maxW = len(n.Title)
-		}
-	}
-	for _, n := range nodes {
-		padding := maxW - len(n.Title) + 2
-		lines = append(lines, fmt.Sprintf("    - %s%s%s", n.Title, strings.Repeat(" ", padding), config.ShortID(n.ID)))
-	}
-	return lines
 }
 
 // fetchAllNodes fetches all nodes with pagination. If orgID is empty, fetches across all orgs.
