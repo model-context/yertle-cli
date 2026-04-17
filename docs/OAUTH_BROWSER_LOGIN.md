@@ -30,7 +30,7 @@ This feature reuses OAuth infrastructure built for the MCP server deployment —
 
 | Resource | Details |
 |----------|---------|
-| Cognito hosted UI | `auth.albertcmiller.com` (dev) / `auth.yertle.com` (prod) |
+| Cognito hosted UI | `auth.dev.yertle.com` (dev) / `auth.yertle.com` (prod) |
 | App client | `OAuthUserPoolClient` — shared with MCP server |
 | Callback URL | `http://localhost:9876/callback` (already registered on the client) |
 | OAuth flow | Authorization code + PKCE (S256) |

@@ -28,7 +28,7 @@ func DefaultConfigPath() string {
 // Returns a default config if the file doesn't exist.
 func Load() (*Config, error) {
 	cfg := &Config{
-		APIURL: "https://api-blue-prod.yertle.com",
+		APIURL: "https://api.yertle.com",
 	}
 
 	data, err := os.ReadFile(DefaultConfigPath())

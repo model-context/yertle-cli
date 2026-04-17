@@ -106,7 +106,7 @@ Token stored in ~/.yertle/config.json
 ```
 $ yertle auth status
 User:     user@example.com
-API:      https://api-blue-prod.yertle.com
+API:      https://api.yertle.com
 Token:    valid (expires in 47m)
 Org:      my-org (default)
 ```
