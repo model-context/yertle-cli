@@ -51,20 +51,19 @@ The CLI reads and writes local state under `~/.yertle/`.
 
 Config behavior from the current code:
 
-- Default API URL is `https://api.yertle.com`
-- `YERTLE_API_URL` overrides the config value (e.g. `YERTLE_API_URL=http://localhost:8000` for local development)
-- `--api-url` overrides both config and environment
+- Default API URL is `https://api.yertle.com`, stored in `~/.yertle/config.json` alongside the auth token from `yertle login`.
+- To point at a different backend (local dev, staging), pass `--api-url` when you log in: `yertle login --api-url http://localhost:8000`. The URL is bound to the token; commands use the stored config thereafter.
 - `YERTLE_ORG` sets the default org scope for a command
 - `--org` overrides `YERTLE_ORG`
 
-Authentication data is stored in the config file after `yertle auth login`. The CLI also supports automatic access-token refresh when a refresh token is present.
+Authentication data is stored in the config file after `yertle login`. The CLI also supports automatic access-token refresh when a refresh token is present.
 
 ## Common Workflow
 
 1. Authenticate:
 
 ```bash
-yertle auth login
+yertle login
 ```
 
 2. Confirm the active target:

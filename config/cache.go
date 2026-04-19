@@ -43,6 +43,18 @@ func LoadCache() *IDCache {
 	return cache
 }
 
+// ClearCache deletes the ID cache file on disk. Used when switching
+// backends at login — cached short-ID → full-UUID mappings from the old
+// backend are invalid (and possibly dangerously ambiguous) on the new one.
+// Missing file is not an error.
+func ClearCache() error {
+	err := os.Remove(cacheFilePath())
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // Save writes the cache to ~/.yertle/id-cache.json.
 func (c *IDCache) Save() error {
 	path := cacheFilePath()
@@ -99,5 +111,13 @@ func ShortID(fullID string) string {
 }
 
 func isFullUUID(s string) bool {
+	return IsFullUUID(s)
+}
+
+// IsFullUUID reports whether s looks like a full UUID (contains a dash or is
+// at least 32 chars long). Cheap heuristic — we don't fully validate the
+// format because the backend will reject malformed UUIDs anyway; this is
+// only used to distinguish "might be an ID" from "definitely a bad arg".
+func IsFullUUID(s string) bool {
 	return strings.Contains(s, "-") || len(s) >= 32
 }

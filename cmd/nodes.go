@@ -92,7 +92,10 @@ var nodesShowCmd = &cobra.Command{
 		}
 
 		// Resolve node ID (and possibly org) through cache
-		nodeID, cachedOrgID, _ := appCtx.Cache.Resolve(args[0])
+		nodeID, cachedOrgID, found := appCtx.Cache.Resolve(args[0])
+		if !found && !config.IsFullUUID(nodeID) {
+			return fmt.Errorf("unknown id %q — pass a full UUID or run 'yertle tree' first to populate the local short-ID cache", args[0])
+		}
 
 		orgID := appCtx.OrgID
 		if (orgID == "" || orgID == "all") && cachedOrgID != "" {

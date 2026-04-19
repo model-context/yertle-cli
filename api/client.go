@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -82,15 +83,7 @@ func (c *Client) do(method, path string, body any, result any) error {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		detail := string(respBody)
-		// Try to extract a detail field from JSON error responses
-		var errResp struct {
-			Detail string `json:"detail"`
-		}
-		if json.Unmarshal(respBody, &errResp) == nil && errResp.Detail != "" {
-			detail = errResp.Detail
-		}
-		return &APIError{StatusCode: resp.StatusCode, Detail: detail}
+		return &APIError{StatusCode: resp.StatusCode, Detail: parseErrorDetail(respBody)}
 	}
 
 	if result != nil {
@@ -100,6 +93,51 @@ func (c *Client) do(method, path string, body any, result any) error {
 	}
 
 	return nil
+}
+
+// parseErrorDetail extracts a short, human-readable message from a non-2xx
+// response body. Handles two common shapes:
+//   - {"detail": "some string"}                              (app-level errors)
+//   - {"detail": [{"loc": [...], "msg": "..."}, ...]}         (FastAPI validation)
+// Falls back to a truncated raw body so we don't dump kilobytes of HTML.
+func parseErrorDetail(body []byte) string {
+	// Shape 1: string detail
+	var asString struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal(body, &asString) == nil && asString.Detail != "" {
+		return asString.Detail
+	}
+
+	// Shape 2: list of validation errors
+	var asList struct {
+		Detail []struct {
+			Loc []any  `json:"loc"`
+			Msg string `json:"msg"`
+		} `json:"detail"`
+	}
+	if json.Unmarshal(body, &asList) == nil && len(asList.Detail) > 0 {
+		parts := make([]string, 0, len(asList.Detail))
+		for _, d := range asList.Detail {
+			field := ""
+			if len(d.Loc) > 0 {
+				field = fmt.Sprintf("%v", d.Loc[len(d.Loc)-1])
+			}
+			if field != "" {
+				parts = append(parts, fmt.Sprintf("%s: %s", field, d.Msg))
+			} else {
+				parts = append(parts, d.Msg)
+			}
+		}
+		return strings.Join(parts, "; ")
+	}
+
+	// Fallback: raw body (truncated)
+	s := string(body)
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	return s
 }
 
 func (c *Client) Get(path string, result any) error {
@@ -130,7 +168,7 @@ func (c *Client) doWithRefresh(method, path string, body any, result any) error 
 	c.triedRefresh = true
 	refreshResp, refreshErr := c.RefreshToken(c.RefreshTokenV)
 	if refreshErr != nil {
-		return fmt.Errorf("token expired and refresh failed — run: yertle auth login")
+		return fmt.Errorf("token expired and refresh failed — run: yertle login")
 	}
 
 	// Update client token and notify caller to persist

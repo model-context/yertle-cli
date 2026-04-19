@@ -73,19 +73,11 @@ func (c *Config) IsTokenExpired() bool {
 	return c.Auth.ExpiresAt.Before(time.Now())
 }
 
-// Resolve applies precedence: flag > env var > config > default.
-// Returns the resolved API URL and org ID.
-func (c *Config) Resolve(flagAPIURL, flagOrg string) (apiURL, org string) {
-	// API URL
+// Resolve returns the API URL from config (single source of truth — bound
+// to the stored auth token at login time) and the org from flag > env.
+func (c *Config) Resolve(flagOrg string) (apiURL, org string) {
 	apiURL = c.APIURL
-	if v := os.Getenv("YERTLE_API_URL"); v != "" {
-		apiURL = v
-	}
-	if flagAPIURL != "" {
-		apiURL = flagAPIURL
-	}
 
-	// Org (flag or env only — no config default)
 	if v := os.Getenv("YERTLE_ORG"); v != "" {
 		org = v
 	}

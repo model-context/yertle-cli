@@ -39,12 +39,11 @@ Common workflows:
     yertle nodes                     List all nodes with metadata
 
   Inspect — understand a specific component:
-    yertle nodes <id>                Full details: children, parents, connections, tags
-    yertle canvas <id>               ASCII architecture diagram of a node's children
+    yertle nodes <id>                Card-per-child view with tags, parents, connections, and inline ASCII diagram
 
   Configure:
-    yertle auth login                Authenticate with the Yertle API
-    yertle config                    View current configuration
+    yertle login                     Authenticate with the Yertle API
+    yertle config                    View config file path, API URL, and auth status
 
 Short IDs:
   All commands display 8-character short IDs (e.g. d29d9d78) that you can

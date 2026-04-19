@@ -27,7 +27,10 @@ var treeCmd = &cobra.Command{
 		// Determine org: positional arg > --org flag > all orgs
 		orgID := appCtx.OrgID
 		if len(args) == 1 {
-			resolved, _, _ := appCtx.Cache.Resolve(args[0])
+			resolved, _, found := appCtx.Cache.Resolve(args[0])
+			if !found && !config.IsFullUUID(resolved) {
+				return fmt.Errorf("unknown id %q — pass a full UUID or run 'yertle tree' first to populate the local short-ID cache", args[0])
+			}
 			orgID = resolved
 		}
 
