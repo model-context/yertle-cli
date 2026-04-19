@@ -226,7 +226,7 @@ func renderNodeHeader(n *api.CompleteNode) []string {
 	var lines []string
 
 	lines = append(lines, n.Node.Title)
-	lines = append(lines, strings.Repeat("─", 40))
+	lines = append(lines, strings.Repeat("─", sectionRuleWidth))
 
 	desc := n.Node.Description
 	if desc == "" {
@@ -268,78 +268,79 @@ func renderNodeHeader(n *api.CompleteNode) []string {
 func renderRelationships(n *api.CompleteNode, canvas api.CanvasResponse) []string {
 	var lines []string
 
-	// Parents — one card per parent (same shape as children), populated from
-	// the top-level canvas entries emitted by include_parents=full.
+	// Parents
 	lines = append(lines, "")
+	lines = append(lines, sectionHeader("PARENTS", len(n.ParentNodes), sectionRuleWidth)...)
 	if len(n.ParentNodes) > 0 {
-		lines = append(lines, fmt.Sprintf("  %d %s:", len(n.ParentNodes), pluralize("Parent", len(n.ParentNodes))))
 		lines = append(lines, renderChildCards(n.ParentNodes, canvas)...)
 	} else {
-		lines = append(lines, "  0 Parents")
+		lines = append(lines, "  "+emptyValue)
 	}
 
-	// Children — one card per child
+	// Children
 	lines = append(lines, "")
+	lines = append(lines, sectionHeader("CHILDREN", len(n.ChildNodes), sectionRuleWidth)...)
 	if len(n.ChildNodes) > 0 {
-		lines = append(lines, fmt.Sprintf("  %d %s:", len(n.ChildNodes), pluralize("Child", len(n.ChildNodes))))
 		lines = append(lines, renderChildCards(n.ChildNodes, canvas)...)
 	} else {
-		lines = append(lines, "  0 Children")
+		lines = append(lines, "  "+emptyValue)
 	}
 
 	// Ingress
 	lines = append(lines, "")
+	lines = append(lines, sectionHeader("INGRESS", len(n.IngressConns), sectionRuleWidth)...)
 	if len(n.IngressConns) > 0 {
-		lines = append(lines, fmt.Sprintf("  %d Ingress:", len(n.IngressConns)))
 		for _, conn := range n.IngressConns {
 			name := conn.ConnectedNode.Title
 			if name == "" {
 				name = conn.FromNodeID
 			}
 			if conn.Label != "" {
-				lines = append(lines, fmt.Sprintf("    - %s → this (%s)", name, conn.Label))
+				lines = append(lines, fmt.Sprintf("  - %s → this (%s)", name, conn.Label))
 			} else {
-				lines = append(lines, fmt.Sprintf("    - %s → this", name))
+				lines = append(lines, fmt.Sprintf("  - %s → this", name))
 			}
 		}
 	} else {
-		lines = append(lines, "  0 Ingress")
+		lines = append(lines, "  "+emptyValue)
 	}
 
 	// Egress
 	lines = append(lines, "")
+	lines = append(lines, sectionHeader("EGRESS", len(n.EgressConns), sectionRuleWidth)...)
 	if len(n.EgressConns) > 0 {
-		lines = append(lines, fmt.Sprintf("  %d Egress:", len(n.EgressConns)))
 		for _, conn := range n.EgressConns {
 			name := conn.ConnectedNode.Title
 			if name == "" {
 				name = conn.ToNodeID
 			}
 			if conn.Label != "" {
-				lines = append(lines, fmt.Sprintf("    - this → %s (%s)", name, conn.Label))
+				lines = append(lines, fmt.Sprintf("  - this → %s (%s)", name, conn.Label))
 			} else {
-				lines = append(lines, fmt.Sprintf("    - this → %s", name))
+				lines = append(lines, fmt.Sprintf("  - this → %s", name))
 			}
 		}
 	} else {
-		lines = append(lines, "  0 Egress")
+		lines = append(lines, "  "+emptyValue)
 	}
 
 	return lines
 }
 
-// renderConnectionsBlock returns a compact list of child-to-child
-// connections for the left-hand data column (beneath the header). Indent
-// matches the header panel style: 2 spaces for the label line, 4 for bullets.
+// renderConnectionsBlock returns a CONNECTIONS section (header + rule + list)
+// for the left-hand data column beneath the parent header. Uses the same
+// rule width as every other section so all separators are visually uniform.
 func renderConnectionsBlock(n *api.CompleteNode) []string {
+	lines := sectionHeader("CONNECTIONS", len(n.Connections), sectionRuleWidth)
+
 	if len(n.Connections) == 0 {
-		return []string{fmt.Sprintf("  %d Connections:  %s", 0, emptyValue)}
+		return append(lines, "  "+emptyValue)
 	}
+
 	titles := make(map[string]string, len(n.ChildNodes))
 	for _, c := range n.ChildNodes {
 		titles[c.ID] = c.Title
 	}
-	lines := []string{fmt.Sprintf("  %d %s:", len(n.Connections), pluralize("Connection", len(n.Connections)))}
 	for _, conn := range n.Connections {
 		from := titles[conn.FromChild]
 		to := titles[conn.ToChild]
@@ -350,9 +351,9 @@ func renderConnectionsBlock(n *api.CompleteNode) []string {
 			to = conn.ToChild
 		}
 		if conn.Label != "" {
-			lines = append(lines, fmt.Sprintf("    - %s → %s (%s)", from, to, conn.Label))
+			lines = append(lines, fmt.Sprintf("  - %s → %s (%s)", from, to, conn.Label))
 		} else {
-			lines = append(lines, fmt.Sprintf("    - %s → %s", from, to))
+			lines = append(lines, fmt.Sprintf("  - %s → %s", from, to))
 		}
 	}
 	return lines
@@ -397,13 +398,28 @@ func formatParentTagLines(tags map[string]any, indent string) []string {
 
 // Layout constants for child cards.
 const (
-	cardHeaderIndent = "    ● " // bullet for card header "● Title  shortID"
-	cardBodyIndent   = "      " // description / section labels
-	cardTagIndent    = "        " // tag rows, one level deeper than body
-	cardSubIndent    = "      " // sub-diagram indent
+	cardHeaderIndent = "  - " // bullet for card header "- Title  shortID"
+	cardBodyIndent   = "    " // description / section labels
+	cardTagIndent    = "      " // tag rows, one level deeper than body
+	cardSubIndent    = "    " // sub-diagram indent
 	tagKeyColMin     = 8
 	tagKeyColMax     = 20
 )
+
+// sectionRuleWidth is the width (in runes) of the horizontal rule under a
+// section header in the bottom band. Capped so it doesn't stretch absurdly
+// wide on large terminals.
+const sectionRuleWidth = 60
+
+// sectionHeader emits a flush-left uppercase section label followed by a
+// full-width horizontal rule. Count appears in parentheses so scanners can
+// pick it out at a glance.
+func sectionHeader(label string, count, ruleWidth int) []string {
+	return []string{
+		fmt.Sprintf("%s (%d)", label, count),
+		strings.Repeat("─", ruleWidth),
+	}
+}
 
 // renderChildCards emits one "card" per child: a header row with the child's
 // title + shortID, then (optionally) description, tag table, a summary line
