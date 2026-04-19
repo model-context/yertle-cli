@@ -125,11 +125,28 @@ var nodesShowCmd = &cobra.Command{
 		connLines := renderConnectionsBlock(complete)
 		canvasLines := renderCanvasLines(complete, false)
 
-		// Left column = header + (if any) connections list beneath it.
+		// Left column of the top band = header + (if any) connections list.
 		leftLines := headerLines
 		if len(connLines) > 0 {
-			leftLines = append(leftLines, "")
 			leftLines = append(leftLines, connLines...)
+		}
+
+		// Collect per-card parts up front so we can compute a single global
+		// left-column width spanning the header and every card, giving every
+		// diagram in the output a common starting column.
+		parentParts := collectCardParts(complete.ParentNodes, canvas)
+		childParts := collectCardParts(complete.ChildNodes, canvas)
+
+		globalLeftW := maxLineWidth(leftLines)
+		for _, p := range parentParts {
+			if w := maxLineWidth(p.left); w > globalLeftW {
+				globalLeftW = w
+			}
+		}
+		for _, p := range childParts {
+			if w := maxLineWidth(p.left); w > globalLeftW {
+				globalLeftW = w
+			}
 		}
 
 		// Right column = diagram alone (shifted down 2 lines to align under
@@ -141,7 +158,7 @@ var nodesShowCmd = &cobra.Command{
 		}
 
 		if len(rightLines) > 0 {
-			top := renderSideBySide(leftLines, rightLines, 4, termWidth)
+			top := renderSideBySide(padToWidth(leftLines, globalLeftW), rightLines, 4, termWidth)
 			for _, line := range top {
 				fmt.Println(line)
 			}
@@ -152,7 +169,7 @@ var nodesShowCmd = &cobra.Command{
 		}
 
 		// Bottom band: parents, child cards, ingress/egress.
-		for _, line := range renderRelationships(complete, canvas) {
+		for _, line := range renderRelationships(complete, parentParts, childParts, globalLeftW) {
 			fmt.Println(line)
 		}
 		return nil
@@ -252,7 +269,6 @@ func renderNodeHeader(n *api.CompleteNode) []string {
 		lines = append(lines, fmt.Sprintf("  Tags:         %s", emptyValue))
 	}
 
-	lines = append(lines, "")
 	if len(n.Directories) > 0 {
 		lines = append(lines, "  Directories:")
 		for _, d := range n.Directories {
@@ -268,14 +284,16 @@ func renderNodeHeader(n *api.CompleteNode) []string {
 // renderRelationships emits the bottom band: parents, one card per child,
 // and ingress/egress to external nodes. Connections between children are
 // rendered in the top band (next to the diagram) by renderConnectionsBlock.
-func renderRelationships(n *api.CompleteNode, canvas api.CanvasResponse) []string {
+// leftW is the global left-column width so every card's diagram starts at
+// the same X column as the top-band diagram.
+func renderRelationships(n *api.CompleteNode, parentParts, childParts []cardParts, leftW int) []string {
 	var lines []string
 
 	// Parents
 	lines = append(lines, "")
 	lines = append(lines, sectionHeader("PARENTS", len(n.ParentNodes), sectionRuleWidth)...)
-	if len(n.ParentNodes) > 0 {
-		lines = append(lines, renderChildCards(n.ParentNodes, canvas)...)
+	if len(parentParts) > 0 {
+		lines = append(lines, renderCardsWithWidth(parentParts, leftW)...)
 	} else {
 		lines = append(lines, "  "+emptyValue)
 	}
@@ -283,8 +301,8 @@ func renderRelationships(n *api.CompleteNode, canvas api.CanvasResponse) []strin
 	// Children
 	lines = append(lines, "")
 	lines = append(lines, sectionHeader("CHILDREN", len(n.ChildNodes), sectionRuleWidth)...)
-	if len(n.ChildNodes) > 0 {
-		lines = append(lines, renderChildCards(n.ChildNodes, canvas)...)
+	if len(childParts) > 0 {
+		lines = append(lines, renderCardsWithWidth(childParts, leftW)...)
 	} else {
 		lines = append(lines, "  "+emptyValue)
 	}
@@ -334,12 +352,11 @@ func renderRelationships(n *api.CompleteNode, canvas api.CanvasResponse) []strin
 // for the left-hand data column beneath the parent header. Uses the same
 // rule width as every other section so all separators are visually uniform.
 func renderConnectionsBlock(n *api.CompleteNode) []string {
-	lines := sectionHeader("CONNECTIONS", len(n.Connections), sectionRuleWidth)
-
 	if len(n.Connections) == 0 {
-		return append(lines, "  "+emptyValue)
+		return []string{fmt.Sprintf("  Connections:  %s", emptyValue)}
 	}
 
+	lines := []string{"  Connections:"}
 	titles := make(map[string]string, len(n.ChildNodes))
 	for _, c := range n.ChildNodes {
 		titles[c.ID] = c.Title
@@ -354,9 +371,9 @@ func renderConnectionsBlock(n *api.CompleteNode) []string {
 			to = conn.ToChild
 		}
 		if conn.Label != "" {
-			lines = append(lines, fmt.Sprintf("  - %s → %s (%s)", from, to, conn.Label))
+			lines = append(lines, fmt.Sprintf("    - %s → %s (%s)", from, to, conn.Label))
 		} else {
-			lines = append(lines, fmt.Sprintf("  - %s → %s", from, to))
+			lines = append(lines, fmt.Sprintf("    - %s → %s", from, to))
 		}
 	}
 	return lines
@@ -424,30 +441,83 @@ func sectionHeader(label string, count, ruleWidth int) []string {
 	}
 }
 
-// renderChildCards emits one "card" per child: a header row with the child's
-// title + shortID, then (optionally) description, tag table, a summary line
-// for contained structure, and an inline sub-diagram if the child has ≥2
-// grandchildren with visual properties. Leaf children render as just the
-// header + tags.
-func renderChildCards(nodes []api.NodeSummary, canvas api.CanvasResponse) []string {
-	var lines []string
-	for i, n := range nodes {
-		if i > 0 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, renderOneChildCard(n, canvas[n.ID])...)
-	}
-	return lines
+// cardParts holds the pre-rendered left (text) and right (diagram) for one
+// card. Keeping these split lets us compute a single global left-column
+// width across every section before joining.
+type cardParts struct {
+	left, right []string
 }
 
-// renderOneChildCard builds the lines for a single child card. `entry` may
-// be nil if the canvas response didn't include a standalone entry for the
-// child (shouldn't happen in practice, but handled defensively).
-func renderOneChildCard(child api.NodeSummary, entry *api.CanvasEntry) []string {
+// collectCardParts builds a cardParts for each node without rendering them
+// yet. Width computation happens at the command level.
+func collectCardParts(nodes []api.NodeSummary, canvas api.CanvasResponse) []cardParts {
+	parts := make([]cardParts, len(nodes))
+	for i, n := range nodes {
+		entry := canvas[n.ID]
+		parts[i] = cardParts{
+			left:  cardLeftLines(n, entry),
+			right: cardRightLines(entry),
+		}
+	}
+	return parts
+}
+
+// renderCardsWithWidth emits all cards with their left columns padded to
+// leftW so every diagram starts at the same X. Cards are separated by a
+// blank line.
+func renderCardsWithWidth(parts []cardParts, leftW int) []string {
+	const gutter = 4
+	var out []string
+	for i, p := range parts {
+		if i > 0 {
+			out = append(out, "")
+		}
+		rows := len(p.left)
+		if len(p.right) > rows {
+			rows = len(p.right)
+		}
+		for r := 0; r < rows; r++ {
+			l := ""
+			if r < len(p.left) {
+				l = p.left[r]
+			}
+			right := ""
+			if r < len(p.right) {
+				right = p.right[r]
+			}
+			padded := l + strings.Repeat(" ", leftW-runeWidth(l))
+			if right != "" {
+				out = append(out, padded+strings.Repeat(" ", gutter)+right)
+			} else {
+				out = append(out, l)
+			}
+		}
+	}
+	return out
+}
+
+// padToWidth right-pads each line with spaces so it reaches w runes. Lines
+// already ≥ w are left unchanged.
+func padToWidth(lines []string, w int) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		pad := w - runeWidth(l)
+		if pad > 0 {
+			out[i] = l + strings.Repeat(" ", pad)
+		} else {
+			out[i] = l
+		}
+	}
+	return out
+}
+
+// cardLeftLines builds the text portion of one card: header, identity,
+// description, directories, contains summary, and tags (last because tags
+// are usually the longest section). `entry` may be nil if the canvas didn't
+// return a standalone entry for this node.
+func cardLeftLines(child api.NodeSummary, entry *api.CanvasEntry) []string {
 	var lines []string
 
-	// Header (title) + Node ID on its own line for consistency with the
-	// parent header and to make the shortID easy to copy.
 	lines = append(lines, fmt.Sprintf("%s%s", cardHeaderIndent, child.Title))
 	lines = append(lines, fmt.Sprintf("%sNode ID:      %s", cardBodyIndent, config.ShortID(child.ID)))
 
@@ -455,14 +525,12 @@ func renderOneChildCard(child api.NodeSummary, entry *api.CanvasEntry) []string 
 		return lines
 	}
 
-	// Description
 	desc := entry.Description
 	if desc == "" {
 		desc = emptyValue
 	}
 	lines = append(lines, fmt.Sprintf("%sDescription:  %s", cardBodyIndent, desc))
 
-	// Directories
 	if len(entry.Directories) > 0 {
 		lines = append(lines, fmt.Sprintf("%sDirectories:", cardBodyIndent))
 		for _, d := range entry.Directories {
@@ -472,26 +540,12 @@ func renderOneChildCard(child api.NodeSummary, entry *api.CanvasEntry) []string 
 		lines = append(lines, fmt.Sprintf("%sDirectories:  %s", cardBodyIndent, emptyValue))
 	}
 
-	// Contains summary — always shown, even if zero/zero, so agents can
-	// distinguish "leaf node" from "field omitted".
 	gcCount := len(entry.ChildNodes)
 	connCount := len(entry.Connections)
 	lines = append(lines, fmt.Sprintf("%sContains:", cardBodyIndent))
 	lines = append(lines, fmt.Sprintf("%s- %d %s", cardTagIndent, gcCount, pluralize("child", gcCount)))
 	lines = append(lines, fmt.Sprintf("%s- %d %s", cardTagIndent, connCount, pluralize("connection", connCount)))
 
-	// Inline sub-diagram when the child has real sub-architecture.
-	if gcCount >= 2 && len(entry.VisualProperties) >= 2 {
-		if sub := buildSubDiagram(entry); len(sub) > 0 {
-			lines = append(lines, "")
-			for _, l := range sub {
-				lines = append(lines, cardSubIndent+l)
-			}
-		}
-	}
-
-	// Tags last — often the most cluttered section (ARNs, URLs), so we
-	// keep it at the bottom of each card.
 	if len(entry.Tags) > 0 {
 		lines = append(lines, fmt.Sprintf("%sTags:", cardBodyIndent))
 		lines = append(lines, formatChildTagTable(entry.Tags, cardTagIndent)...)
@@ -500,6 +554,15 @@ func renderOneChildCard(child api.NodeSummary, entry *api.CanvasEntry) []string 
 	}
 
 	return lines
+}
+
+// cardRightLines returns the sub-diagram lines that sit to the right of
+// the card text. Returns nil when the node has no drawable children.
+func cardRightLines(entry *api.CanvasEntry) []string {
+	if entry == nil {
+		return nil
+	}
+	return buildSubDiagram(entry)
 }
 
 // buildSubDiagram synthesizes a minimal CompleteNode view of a child's
