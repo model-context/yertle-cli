@@ -197,7 +197,7 @@ func (c *ChildRef) UnmarshalJSON(data []byte) error {
 type CanvasResponse map[string]*CanvasEntry
 
 func (c *Client) GetCanvasState(orgID, nodeID, branch string) (CanvasResponse, error) {
-	path := fmt.Sprintf("/orgs/%s/nodes/%s/tree/%s/canvas?include_parents=full", orgID, nodeID, branch)
+	path := fmt.Sprintf("/orgs/%s/nodes/%s/tree/%s/canvas?include_related=full", orgID, nodeID, branch)
 	resp := CanvasResponse{}
 	if err := c.Get(path, &resp); err != nil {
 		return nil, err

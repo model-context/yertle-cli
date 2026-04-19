@@ -136,6 +136,8 @@ var nodesShowCmd = &cobra.Command{
 		// diagram in the output a common starting column.
 		parentParts := collectCardParts(complete.ParentNodes, canvas)
 		childParts := collectCardParts(complete.ChildNodes, canvas)
+		ingressParts := collectCardParts(externalNodesFromConns(complete.IngressConns, "ingress", canvas), canvas)
+		egressParts := collectCardParts(externalNodesFromConns(complete.EgressConns, "egress", canvas), canvas)
 
 		globalLeftW := maxLineWidth(leftLines)
 		for _, p := range parentParts {
@@ -144,6 +146,16 @@ var nodesShowCmd = &cobra.Command{
 			}
 		}
 		for _, p := range childParts {
+			if w := maxLineWidth(p.left); w > globalLeftW {
+				globalLeftW = w
+			}
+		}
+		for _, p := range ingressParts {
+			if w := maxLineWidth(p.left); w > globalLeftW {
+				globalLeftW = w
+			}
+		}
+		for _, p := range egressParts {
 			if w := maxLineWidth(p.left); w > globalLeftW {
 				globalLeftW = w
 			}
@@ -169,7 +181,7 @@ var nodesShowCmd = &cobra.Command{
 		}
 
 		// Bottom band: parents, child cards, ingress/egress.
-		for _, line := range renderRelationships(complete, parentParts, childParts, globalLeftW) {
+		for _, line := range renderRelationships(complete, parentParts, childParts, ingressParts, egressParts, globalLeftW) {
 			fmt.Println(line)
 		}
 		return nil
@@ -286,12 +298,12 @@ func renderNodeHeader(n *api.CompleteNode) []string {
 // rendered in the top band (next to the diagram) by renderConnectionsBlock.
 // leftW is the global left-column width so every card's diagram starts at
 // the same X column as the top-band diagram.
-func renderRelationships(n *api.CompleteNode, parentParts, childParts []cardParts, leftW int) []string {
+func renderRelationships(n *api.CompleteNode, parentParts, childParts, ingressParts, egressParts []cardParts, leftW int) []string {
 	var lines []string
 
 	// Parents
 	lines = append(lines, "")
-	lines = append(lines, sectionHeader("PARENTS", len(n.ParentNodes), sectionRuleWidth)...)
+	lines = append(lines, sectionHeader("PARENTS", sectionRuleWidth)...)
 	if len(parentParts) > 0 {
 		lines = append(lines, renderCardsWithWidth(parentParts, leftW)...)
 	} else {
@@ -300,7 +312,7 @@ func renderRelationships(n *api.CompleteNode, parentParts, childParts []cardPart
 
 	// Children
 	lines = append(lines, "")
-	lines = append(lines, sectionHeader("CHILDREN", len(n.ChildNodes), sectionRuleWidth)...)
+	lines = append(lines, sectionHeader("CHILDREN", sectionRuleWidth)...)
 	if len(childParts) > 0 {
 		lines = append(lines, renderCardsWithWidth(childParts, leftW)...)
 	} else {
@@ -309,43 +321,49 @@ func renderRelationships(n *api.CompleteNode, parentParts, childParts []cardPart
 
 	// Ingress
 	lines = append(lines, "")
-	lines = append(lines, sectionHeader("INGRESS", len(n.IngressConns), sectionRuleWidth)...)
-	if len(n.IngressConns) > 0 {
-		for _, conn := range n.IngressConns {
-			name := conn.ConnectedNode.Title
-			if name == "" {
-				name = conn.FromNodeID
-			}
-			if conn.Label != "" {
-				lines = append(lines, fmt.Sprintf("  - %s → this (%s)", name, conn.Label))
-			} else {
-				lines = append(lines, fmt.Sprintf("  - %s → this", name))
-			}
-		}
+	lines = append(lines, sectionHeader("INGRESS", sectionRuleWidth)...)
+	if len(ingressParts) > 0 {
+		lines = append(lines, renderCardsWithWidth(ingressParts, leftW)...)
 	} else {
 		lines = append(lines, "  "+emptyValue)
 	}
 
 	// Egress
 	lines = append(lines, "")
-	lines = append(lines, sectionHeader("EGRESS", len(n.EgressConns), sectionRuleWidth)...)
-	if len(n.EgressConns) > 0 {
-		for _, conn := range n.EgressConns {
-			name := conn.ConnectedNode.Title
-			if name == "" {
-				name = conn.ToNodeID
-			}
-			if conn.Label != "" {
-				lines = append(lines, fmt.Sprintf("  - this → %s (%s)", name, conn.Label))
-			} else {
-				lines = append(lines, fmt.Sprintf("  - this → %s", name))
-			}
-		}
+	lines = append(lines, sectionHeader("EGRESS", sectionRuleWidth)...)
+	if len(egressParts) > 0 {
+		lines = append(lines, renderCardsWithWidth(egressParts, leftW)...)
 	} else {
 		lines = append(lines, "  "+emptyValue)
 	}
 
 	return lines
+}
+
+// externalNodesFromConns extracts the remote node from each external
+// connection. `direction` is "ingress" (use FromNodeID) or "egress"
+// (use ToNodeID). Title/description fall back to the canvas entry when
+// richer data is available there (include_related=full fills these).
+func externalNodesFromConns(conns []api.ExternalConn, direction string, canvas api.CanvasResponse) []api.NodeSummary {
+	out := make([]api.NodeSummary, 0, len(conns))
+	for _, c := range conns {
+		id := c.FromNodeID
+		if direction == "egress" {
+			id = c.ToNodeID
+		}
+		title := c.ConnectedNode.Title
+		desc := c.ConnectedNode.Description
+		if entry, ok := canvas[id]; ok && entry != nil {
+			if entry.Title != "" {
+				title = entry.Title
+			}
+			if entry.Description != "" {
+				desc = entry.Description
+			}
+		}
+		out = append(out, api.NodeSummary{ID: id, Title: title, Description: desc})
+	}
+	return out
 }
 
 // renderConnectionsBlock returns a CONNECTIONS section (header + rule + list)
@@ -434,9 +452,9 @@ const sectionRuleWidth = 60
 // sectionHeader emits a flush-left uppercase section label followed by a
 // full-width horizontal rule. Count appears in parentheses so scanners can
 // pick it out at a glance.
-func sectionHeader(label string, count, ruleWidth int) []string {
+func sectionHeader(label string, ruleWidth int) []string {
 	return []string{
-		fmt.Sprintf("%s (%d)", label, count),
+		label,
 		strings.Repeat("─", ruleWidth),
 	}
 }
