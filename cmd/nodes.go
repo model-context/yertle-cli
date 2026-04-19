@@ -443,8 +443,10 @@ func renderChildCards(nodes []api.NodeSummary, canvas api.CanvasResponse) []stri
 func renderOneChildCard(child api.NodeSummary, entry *api.CanvasEntry) []string {
 	var lines []string
 
-	// Header
-	lines = append(lines, fmt.Sprintf("%s%s  %s", cardHeaderIndent, child.Title, config.ShortID(child.ID)))
+	// Header (title) + Node ID on its own line for consistency with the
+	// parent header and to make the shortID easy to copy.
+	lines = append(lines, fmt.Sprintf("%s%s", cardHeaderIndent, child.Title))
+	lines = append(lines, fmt.Sprintf("%sNode ID:      %s", cardBodyIndent, config.ShortID(child.ID)))
 
 	if entry == nil {
 		return lines
@@ -471,11 +473,9 @@ func renderOneChildCard(child api.NodeSummary, entry *api.CanvasEntry) []string 
 	// distinguish "leaf node" from "field omitted".
 	gcCount := len(entry.ChildNodes)
 	connCount := len(entry.Connections)
-	lines = append(lines, fmt.Sprintf("%sContains:     %d %s, %d %s",
-		cardBodyIndent,
-		gcCount, pluralize("child", gcCount),
-		connCount, pluralize("connection", connCount),
-	))
+	lines = append(lines, fmt.Sprintf("%sContains:", cardBodyIndent))
+	lines = append(lines, fmt.Sprintf("%s- %d %s", cardTagIndent, gcCount, pluralize("child", gcCount)))
+	lines = append(lines, fmt.Sprintf("%s- %d %s", cardTagIndent, connCount, pluralize("connection", connCount)))
 
 	// Inline sub-diagram when the child has real sub-architecture.
 	if gcCount >= 2 && len(entry.VisualProperties) >= 2 {
@@ -561,7 +561,7 @@ func formatChildTagTable(tags map[string]any, indent string) []string {
 		}
 		keyCell = keyCell + strings.Repeat(" ", keyW-len(keyCell))
 
-		out = append(out, fmt.Sprintf("%s%s  %s", indent, keyCell, val))
+		out = append(out, fmt.Sprintf("%s- %s  %s", indent, keyCell, val))
 	}
 	return out
 }
