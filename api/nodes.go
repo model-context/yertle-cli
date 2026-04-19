@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type Node struct {
 	ID          string         `json:"id"`
@@ -135,4 +138,69 @@ func (c *Client) GetCompleteNode(orgID, nodeID, branch string) (*CompleteNode, e
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// Canvas response — flat dict keyed by node ID. Each entry is a "push-compatible"
+// flattened state for one node (parent + one level of children). The parent's
+// `child_nodes` field is a list of ID strings; child entries carry the deeper
+// `child_nodes` objects, but we don't use those here.
+
+type CanvasEntry struct {
+	ID               string           `json:"id"`
+	Title            string           `json:"title"`
+	Description      string           `json:"description"`
+	OrgID            string           `json:"org_id"`
+	Tags             map[string]any   `json:"tags"`
+	Directories      []string         `json:"directories"`
+	ChildNodes       []ChildRef       `json:"child_nodes"`
+	VisualProperties []VisualProperty `json:"visual_properties"`
+	Connections      []Connection     `json:"connections"`
+	// ParentNodes accepts either a list of {id,title,description} stubs (slim
+	// mode, the API default) or a list of UUID strings (include_parents=full,
+	// where each parent also appears as a top-level entry in the response map).
+	ParentNodes []ChildRef `json:"parent_nodes"`
+	IngressConns     []ExternalConn   `json:"ingress_connections"`
+	EgressConns      []ExternalConn   `json:"egress_connections"`
+	Metadata         map[string]any   `json:"metadata"`
+}
+
+// ChildRef accepts either a string ID (parent entry) or a {id,title,...}
+// object (child entries).
+type ChildRef struct {
+	ID          string
+	Title       string
+	Description string
+}
+
+func (c *ChildRef) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		c.ID = s
+		return nil
+	}
+	var obj struct {
+		ID          string `json:"id"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	c.ID = obj.ID
+	c.Title = obj.Title
+	c.Description = obj.Description
+	return nil
+}
+
+// CanvasResponse is keyed by node ID; it also contains a `_canvas_metadata`
+// key inside the parent entry, which we ignore.
+type CanvasResponse map[string]*CanvasEntry
+
+func (c *Client) GetCanvasState(orgID, nodeID, branch string) (CanvasResponse, error) {
+	path := fmt.Sprintf("/orgs/%s/nodes/%s/tree/%s/canvas?include_related=full", orgID, nodeID, branch)
+	resp := CanvasResponse{}
+	if err := c.Get(path, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }

@@ -7,22 +7,40 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albertcmiller1/flow/cli/api"
 	"github.com/albertcmiller1/flow/cli/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
 
-var authCmd = &cobra.Command{
-	Use:   "auth",
-	Short: "Show current authentication status",
-	RunE:  authStatusCmd.RunE,
-}
-
-var authLoginCmd = &cobra.Command{
+var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with the Yertle API",
+	Long: `Authenticate with the Yertle API and persist the token to config.
+
+By default, sign in against production (https://api.yertle.com).
+Pass --api-url to point at a different backend (e.g. a local dev server
+or staging). The URL you log into is bound to the stored token, so all
+subsequent commands use that same backend until you log in again.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		appCtx := GetAppContext(cmd)
+
+		// If --api-url is set, update config and rebuild the client so the
+		// SignIn call hits the chosen backend. Also wipe the ID cache —
+		// cached short-ID mappings are per-backend and become invalid (or
+		// ambiguous) when the backend changes.
+		flagAPIURL, _ := cmd.Flags().GetString("api-url")
+		if flagAPIURL != "" && flagAPIURL != appCtx.Config.APIURL {
+			appCtx.Config.APIURL = flagAPIURL
+			appCtx.Config.Auth = nil // stale — was issued by a different backend
+			appCtx.Client = api.NewClient(flagAPIURL, "")
+			if err := config.ClearCache(); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not clear ID cache: %v\n", err)
+			}
+			appCtx.Cache = config.LoadCache() // reset to empty in-memory cache
+		}
+
+		fmt.Printf("Signing in to %s\n", appCtx.Config.APIURL)
 
 		// Prompt for email
 		fmt.Print("Email: ")
@@ -67,33 +85,6 @@ var authLoginCmd = &cobra.Command{
 	},
 }
 
-var authStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show current authentication status",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		appCtx := GetAppContext(cmd)
-
-		if !appCtx.Config.IsAuthenticated() {
-			fmt.Println("Not logged in. Run: yertle auth login")
-			return nil
-		}
-
-		auth := appCtx.Config.Auth
-		fmt.Printf("User:     %s\n", auth.Email)
-		fmt.Printf("API:      %s\n", appCtx.Config.APIURL)
-
-		if appCtx.Config.IsTokenExpired() {
-			fmt.Println("Token:    expired")
-		} else {
-			remaining := time.Until(auth.ExpiresAt).Truncate(time.Minute)
-			fmt.Printf("Token:    valid (expires in %s)\n", remaining)
-		}
-
-		return nil
-	},
-}
-
 func init() {
-	authCmd.AddCommand(authLoginCmd)
-	authCmd.AddCommand(authStatusCmd)
+	loginCmd.Flags().String("api-url", "", "Override the API URL for this login (defaults to the current config value)")
 }

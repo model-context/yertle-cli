@@ -80,7 +80,10 @@ var orgsShowCmd = &cobra.Command{
 			return err
 		}
 
-		orgID, _, _ := appCtx.Cache.Resolve(args[0])
+		orgID, _, found := appCtx.Cache.Resolve(args[0])
+		if !found && !config.IsFullUUID(orgID) {
+			return fmt.Errorf("unknown id %q — pass a full UUID or run 'yertle orgs' first to populate the local short-ID cache", args[0])
+		}
 
 		org, err := appCtx.Client.GetOrganization(orgID)
 		if err != nil {
