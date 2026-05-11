@@ -41,6 +41,9 @@ Common workflows:
   Inspect — understand a specific component:
     yertle nodes <id>                Card-per-child view with tags, parents, connections, and inline ASCII diagram
 
+  Find — natural-language search:
+    yertle rag "<query>"             Rank nodes most likely to match a query (add --expand for parents/children/connections)
+
   Configure:
     yertle login                     Authenticate with the Yertle API
     yertle config                    View config file path, API URL, and auth status

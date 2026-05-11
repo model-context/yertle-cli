@@ -126,6 +126,7 @@ func init() {
 	rootCmd.AddCommand(nodesCmd)
 	rootCmd.AddCommand(treeCmd)
 	rootCmd.AddCommand(monitorCmd)
+	rootCmd.AddCommand(ragCmd)
 }
 
 func SetVersion(v string) {
